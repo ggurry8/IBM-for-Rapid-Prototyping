@@ -26,6 +26,7 @@ x = linspace(dx/2, Lx-dx/2, Nx);
 y = linspace(dy/2, Ly-dy/2, Ny);
 [X,Y] = meshgrid(x,y);
 
+
 % Import Geometry
 [xGeometry, yGeometry] = aerofoil_generation(app.NACA4DigitCodeEditField.Value, app.ChordLengthEditField.Value, app.AngleofAttackEditField.Value, app.NumberofPointsEditField.Value);
 xGeometry = xGeometry + Lx * app.CoordinatesofLeadingEdgeX.Value/100;
@@ -65,6 +66,10 @@ Ucon(:,:,1) = rho;
 Ucon(:,:,2) = rho .* U;
 Ucon(:,:,3) = rho .* V;
 Ucon(:,:,4) = rhoe;
+
+% store info about simulation in simData property
+simulationData = simDataStore(Ucon);
+simulationData = simulationData.MeshInfo(X, Y);
 
 % solver parameters
 CFL = app.CFLEditField.Value;                 % CFL number for stability
@@ -106,12 +111,15 @@ while t < tEnd
     Ucon = U2;
     Ucon = applyGeometryBCs(Ucon, geometryObj);
     t = t + dt;
+    simulationData = simDataStore(Ucon);
+    simulationData = simulationData.MeshInfo(X, Y); % TODO - this might be inefficient to reassign every time
 
     % plot density occasionally
     if mod(frame,plotEvery)==0 || t>=tEnd
         rho = Ucon(:,:,1);
-        imagesc(app.FlowVisualiser,x,y,rho); 
-        imagesc(app.FlowVisualiser,x,y,rho); 
+        imageSizeX = [x(1) x(end)];
+        imageSizeY = [y(1) y(end)];
+        imagesc(app.FlowVisualiser,imageSizeX,imageSizeY,rho); 
         set(app.FlowVisualiser,'YDir','normal');
         title(app.FlowVisualiser, sprintf('Density at t = %.4f', t)); 
         colorbar(app.FlowVisualiser); 
@@ -122,11 +130,19 @@ while t < tEnd
     app.SimulationTimeField.Value = t;
     frame = frame + 1;
     app.IterationNumberField.Value = frame;
-    if app.TerminateApp
-        app.TerminateApp = false; % reset property
+    if app.TerminateSimProperty
+        app.TerminateSimProperty = false; % reset property
+        % pass data out of app
+        app.simData = simulationData;
         break
     elseif app.PauseSimulationButton.Value
+        % pass sim data out of app
+        app.simData = simulationData;
         while app.PauseSimulationButton.Value
+            if app.TerminateSimProperty
+                app.TerminateSimProperty = false; % reset property
+            break
+            end
             pause(1)
         end
     end

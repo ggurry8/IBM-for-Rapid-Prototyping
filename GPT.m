@@ -13,6 +13,25 @@
 %   consider preconditioning (not implemented here) or use an incompressible solver.
 % - Boundary conditions: options for periodic / wall / inflow-outflow are included.
 % - This code is intentionally simple and readable, not optimized for performance.
+%
+% Notations
+% FLOW:
+%   U - cell variable averages array [rho; u; v; p]
+%   use of con, ext suffixes on U denotes conservative and 
+%   extended (for application of wall BCs) arrays
+%   rho - density
+%   u,v - x,y velocity
+%   p - pressure
+%   
+% GRID:
+%   Lx,Ly - Domain physical size (x,y)
+%   Nx,Ny - Domain grid size (x,y)
+%   
+%   
+%   
+%   
+%   
+%   
 
 function GPT(app)
 
@@ -21,11 +40,10 @@ function GPT(app)
 % --------------------
 Lx = app.XDomainEditField.Value; Ly = app.YDomainEditField.Value;         % domain size
 Nx = app.XGridEditField.Value; Ny = app.YGridEditField.Value;         % grid cells in x/y
-dx = Lx / Nx; dy = Ly / Ny;
+dx = Lx / Nx; dy = Ly / Ny; % grid spacing (x,y) 
 x = linspace(dx/2, Lx-dx/2, Nx);
 y = linspace(dy/2, Ly-dy/2, Ny);
 [X,Y] = meshgrid(x,y);
-
 
 % Import Geometry
 [xGeometry, yGeometry] = aerofoil_generation(app.NACA4DigitCodeEditField.Value, app.ChordLengthEditField.Value, app.AngleofAttackEditField.Value, app.NumberofPointsEditField.Value);
@@ -43,7 +61,7 @@ Rgas = 287;                 % gas constant (not used explicitly if using p=(gamm
 
 % Flow initial condition (uniform flow)
 rho0 = 1.0;                 % background density
-U0 = 0.2;                   % background velocity in x (choose M ~ 0.2 w.r.t. c)
+U0 = app.InletVelocityEditField.Value;                   % background velocity in x
 V0 = 0.0;                   % background velocity in y
 p0 = 1.0;                   % background pressure
 
@@ -62,7 +80,7 @@ p = p0 * ones(size(rho));
 E = p./((gamma-1)) ./ rho + 0.5*(U.^2 + V.^2); % specific total energy
 rhoe = rho .* E;
 Ucon = zeros(Ny, Nx, 4); % initialise variable
-Ucon(:,:,1) = rho;
+Ucon(:,:,1) = rho;       % conservative variable flow properties
 Ucon(:,:,2) = rho .* U;
 Ucon(:,:,3) = rho .* V;
 Ucon(:,:,4) = rhoe;
@@ -104,9 +122,9 @@ while t < tEnd
     if t + dt > tEnd, dt = tEnd - t; end
 
     % RK2 (Heun): stage 1
-    U1 = Ucon + dt * RHS(Ucon, Nx, Ny, dx, dy, gamma, visc_alpha, boundary);
+    U1 = Ucon + dt * RHS(Ucon, dx, dy, gamma, visc_alpha, boundary);
     % stage 2
-    U2 = 0.5*(Ucon + U1 + dt * RHS(U1, Nx, Ny, dx, dy, gamma, visc_alpha, boundary));
+    U2 = 0.5*(Ucon + U1 + dt * RHS(U1, dx, dy, gamma, visc_alpha, boundary));
 
     Ucon = U2;
     Ucon = applyGeometryBCs(Ucon, geometryObj);
@@ -155,13 +173,9 @@ end
 % --------------------
 % RHS function (finite-volume / fluxes)
 % --------------------
-function RHSout = RHS(Ucon, Nx, Ny, dx, dy, gamma, visc_alpha, boundary)
+function RHSout = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary)
     % Ucon: Ny x Nx x 4 array
     % returns dU/dt of same shape
-
-    % allocate flux arrays
-    Fx = zeros(Ny, Nx+1, 4); % flux through vertical faces (i-1/2, i+1/2)
-    Fy = zeros(Ny+1, Nx, 4); % flux through horizontal faces
 
     % reconstruct states at faces using MUSCL (linear reconstruction) with minmod limiter
     % For simplicity handle interior with one-sided for boundaries depending on 'boundary'
@@ -175,48 +189,22 @@ function RHSout = RHS(Ucon, Nx, Ny, dx, dy, gamma, visc_alpha, boundary)
     c = sqrt(max(gamma * p ./ density, 1e-12));
 
     % extend arrays for BCs
-    [rho_e, u_e, v_e, p_e] = applyWallBCs(density,u,v,p,boundary);
+    [rho_e, u_e, v_e, p_e] = applyWallBCs(density,u,v,p,boundary); % this adds 2 extra rows and 2 extra columns to all 4 ...
     E_e = p_e./((gamma-1))./rho_e + 0.5*(u_e.^2 + v_e.^2);
-    Ue = zeros(size(rho_e,1), size(rho_e,2), 4);
-    Ue(:,:,1) = rho_e; Ue(:,:,2) = rho_e.*u_e; Ue(:,:,3) = rho_e.*v_e; Ue(:,:,4) = rho_e.*E_e;
+    Uext_con = zeros(size(rho_e,1), size(rho_e,2), 4); % ... hence this follows in to Uext 
+    Uext_con(:,:,1) = rho_e; 
+    Uext_con(:,:,2) = rho_e.*u_e; 
+    Uext_con(:,:,3) = rho_e.*v_e; 
+    Uext_con(:,:,4) = rho_e.*E_e;
 
-    % compute fluxes in x-direction (faces i-1/2 ... )
-    for j = 1:Ny
-        for i = 1:Nx+1
-            % left cell index in extended grid
-            il = i; ir = i; % in extended Ue indexing (1..Nx+2)
-            UL = squeeze(Ue(j+1, il, :)); % note: Ue has extra rows/cols from BC padding
-            UR = squeeze(Ue(j+1, ir, :));
-            % convert to primitive
-            [primL] = cons2prim(UL, gamma);
-            [primR] = cons2prim(UR, gamma);
-            % compute Rusanov flux
-            Fx(j,i,:) = rusanov_flux(primL, primR, 'x', gamma);
-        end
-    end
+    % compute Rusanov flux, x-direction
+    Fx = rusanov_flux(Uext_con, 'x', gamma); % TODO this is changing the size of the grid by 1 column in x
 
     % compute fluxes in y-direction
-    for j = 1:Ny+1
-        for i = 1:Nx
-            jl = j; jr = j+1;
-            UL = squeeze(Ue(jl, i+1, :));
-            UR = squeeze(Ue(jr, i+1, :));
-            [primL] = cons2prim(UL, gamma);
-            [primR] = cons2prim(UR, gamma);
-            Fy(j,i,:) = rusanov_flux(primL, primR, 'y', gamma);
-        end
-    end
+    Fy = rusanov_flux(Uext_con, 'y', gamma); % TODO this is changing the size of the grid by 1 row in y
 
     % assemble RHS via divergence of fluxes
-    RHSout = zeros(Ny, Nx, 4);
-    for j = 1:Ny
-        for i = 1:Nx
-            % flux differences
-            Fx_in = squeeze(Fx(j,i+1,:)); Fx_out = squeeze(Fx(j,i+0,:));
-            Fy_in = squeeze(Fy(j+1,i,:)); Fy_out = squeeze(Fy(j+0,i,:));
-            RHSout(j,i,:) = - (Fx_in - Fx_out)/dx - (Fy_in - Fy_out)/dy;
-        end
-    end
+    RHSout = flow_divergence(Fx, Fy, dx, dy);
 
     % optional explicit artificial viscosity (simple Laplacian on conserved variables)
     if visc_alpha > 0
@@ -239,7 +227,7 @@ function Ucon = applyGeometryBCs(Ucon, geometryObj)
 % preallocate Ughost
 Ughost = Ucon; % initialise variable
 
-% loop through boundary-adjacent fluid cells
+% loop through boundary-adjacent fluid cells - TODO vectorise this
 for j = 2:size(Ucon,1)-1
     for i = 2:size(Ucon,2)-1
         if geometryObj.geometryBorder(j,i) && ~geometryObj.withinGeometry(j,i)
@@ -279,10 +267,11 @@ for j = 2:size(Ucon,1)-1
             Ughost(j,i,3) = rho_g * v_g;
             Ughost(j,i,4) = rho_g * E_g;
         elseif geometryObj.withinGeometry(j,i)
-            Ughost(j,i,1) = rho_g;
-            Ughost(j,i,2) = rho_g * u_g;
-            Ughost(j,i,3) = rho_g * v_g;
-            Ughost(j,i,4) = rho_g * E_g;
+            % set the cells within the geometry
+            Ughost(j,i,1) = 1; % rho
+            Ughost(j,i,2) = 0; % x velocity
+            Ughost(j,i,3) = 0; % y velocity
+            Ughost(j,i,4) = rho_g * E_g; % Energy
         end
     end
 end
@@ -323,72 +312,123 @@ function [rho_e, u_e, v_e, p_e] = applyWallBCs(rho,u,v,p,boundary)
             p_e(end,:) = p_e(2,:);
         case 'wall'
             % reflective wall for velocities, copy density/pressure
-            rho_e(:,1)   = rho_e(:,2); rho_e(:,end) = rho_e(:,end-1);
-            rho_e(1,:)   = rho_e(2,:); rho_e(end,:) = rho_e(end-1,:);
-            p_e(:,1)   = p_e(:,2); p_e(:,end) = p_e(:,end-1);
-            p_e(1,:)   = p_e(2,:); p_e(end,:) = p_e(end-1,:);
-            u_e(:,1)   = -u_e(:,2); u_e(:,end) = -u_e(:,end-1);
-            u_e(1,:)   = -u_e(2,:); u_e(end,:) = -u_e(end-1,:);
-            v_e(:,1)   = -v_e(:,2); v_e(:,end) = -v_e(:,end-1);
-            v_e(1,:)   = -v_e(2,:); v_e(end,:) = -v_e(end-1,:);
+            rho_e(:,1)   = rho_e(:,2); 
+            rho_e(:,end) = rho_e(:,end-1);
+            rho_e(1,:)   = rho_e(2,:); 
+            rho_e(end,:) = rho_e(end-1,:);
+            p_e(:,1)   = p_e(:,2); 
+            p_e(:,end) = p_e(:,end-1);
+            p_e(1,:)   = p_e(2,:); 
+            p_e(end,:) = p_e(end-1,:);
+            u_e(:,1)   = -u_e(:,2);
+            u_e(:,end) = -u_e(:,end-1);
+            u_e(1,:)   = -u_e(2,:); 
+            u_e(end,:) = -u_e(end-1,:);
+            v_e(:,1)   = -v_e(:,2); 
+            v_e(:,end) = -v_e(:,end-1);
+            v_e(1,:)   = -v_e(2,:); 
+            v_e(end,:) = -v_e(end-1,:);
         otherwise
             % default: outflow (copy)
-            rho_e(:,1)   = rho_e(:,2); rho_e(:,end) = rho_e(:,end-1);
-            rho_e(1,:)   = rho_e(2,:); rho_e(end,:) = rho_e(end-1,:);
-            p_e(:,1)   = p_e(:,2); p_e(:,end) = p_e(:,end-1);
-            p_e(1,:)   = p_e(2,:); p_e(end,:) = p_e(end-1,:);
-            u_e(:,1)   = u_e(:,2); u_e(:,end) = u_e(:,end-1);
-            u_e(1,:)   = u_e(2,:); u_e(end,:) = u_e(end-1,:);
-            v_e(:,1)   = v_e(:,2); v_e(:,end) = v_e(:,end-1);
-            v_e(1,:)   = v_e(2,:); v_e(end,:) = v_e(end-1,:);
+            rho_e(:,1)   = rho_e(:,2); 
+            rho_e(:,end) = rho_e(:,end-1);
+            rho_e(1,:)   = rho_e(2,:); 
+            rho_e(end,:) = rho_e(end-1,:);
+            p_e(:,1)   = p_e(:,2); 
+            p_e(:,end) = p_e(:,end-1);
+            p_e(1,:)   = p_e(2,:); 
+            p_e(end,:) = p_e(end-1,:);
+            u_e(:,1)   = u_e(:,2); 
+            u_e(:,end) = u_e(:,end-1);
+            u_e(1,:)   = u_e(2,:); 
+            u_e(end,:) = u_e(end-1,:);
+            v_e(:,1)   = v_e(:,2); 
+            v_e(:,end) = v_e(:,end-1);
+            v_e(1,:)   = v_e(2,:); 
+            v_e(end,:) = v_e(end-1,:);
     end
 end
 
 % --------------------
 % helper: convert conserved -> primitive (vector)
 % --------------------
+% TODO WIP - should work for any size of U
 function prim = cons2prim(Uvec, gamma)
-    rho = Uvec(1);
-    u = Uvec(2)/rho;
-    v = Uvec(3)/rho;
-    E = Uvec(4)/rho;
-    p = (gamma-1)*rho*(E - 0.5*(u^2 + v^2));
-    prim = struct('rho',rho,'u',u,'v',v,'p',p);
+    rho = Uvec(:,:,1);
+    u = Uvec(:,:,2)./rho;
+    v = Uvec(:,:,3)./rho;
+    E = Uvec(:,:,4)./rho;
+    p = (gamma-1).*rho.*(E - 0.5*(u.^2 + v.^2));
+    prim = cat(3, rho, u, v, p);
 end
 
 % --------------------
 % helper: Rusanov flux between two primitive states
 % --------------------
-function F = rusanov_flux(L, R, dir, gamma)
-    % compute conservative variables
-    UL = [L.rho; L.rho*L.u; L.rho*L.v; L.rho*(L.p/(gamma-1)/L.rho + 0.5*(L.u^2+L.v^2))];
-    UR = [R.rho; R.rho*R.u; R.rho*R.v; R.rho*(R.p/(gamma-1)/R.rho + 0.5*(R.u^2+R.v^2))];
+% inputs: Uext_con - flow variables array, extended conservative
+%         dir - x or y direction of flux computation
+%         gamma - ratio of specific heats
+% L & R denote the left and right faces of the cells relative to dir (direction of flux computation)
+function F = rusanov_flux(Uext_con, dir, gamma)
 
-    if strcmp(dir,'x')
-        FL = [L.rho*L.u;
-              L.rho*L.u^2 + L.p;
-              L.rho*L.u*L.v;
-              (UL(4)+L.p)*L.u];
-        FR = [R.rho*R.u;
-              R.rho*R.u^2 + R.p;
-              R.rho*R.u*R.v;
-              (UR(4)+R.p)*R.u];
-        aL = sqrt(gamma * L.p / L.rho);
-        aR = sqrt(gamma * R.p / R.rho);
-        smax = max(abs(L.u)+aL, abs(R.u)+aR);
-    else % y-direction
-        FL = [L.rho*L.v;
-              L.rho*L.u*L.v;
-              L.rho*L.v^2 + L.p;
-              (UL(4)+L.p)*L.v];
-        FR = [R.rho*R.v;
-              R.rho*R.u*R.v;
-              R.rho*R.v^2 + R.p;
-              (UR(4)+R.p)*R.v];
-        aL = sqrt(gamma * L.p / L.rho);
-        aR = sqrt(gamma * R.p / R.rho);
-        smax = max(abs(L.v)+aL, abs(R.v)+aR);
+    % matrix manipulation
+    switch dir
+        case 'x'
+            ULcon = Uext_con(:,1:end-1,:);
+            URcon = Uext_con(:,2:end,:);
+        case 'y'
+            ULcon = Uext_con(1:end-1,:,:);
+            URcon = Uext_con(2:end,:,:);
     end
+    UL = cons2prim(ULcon, gamma);
+    UR = cons2prim(URcon, gamma);
+    L = struct('rho',ULcon(:,:,1), 'rho_u',ULcon(:,:,2), 'rho_v',ULcon(:,:,3), 'rho_E',ULcon(:,:,4), 'u',UL(:,:,2), 'v',UL(:,:,3), 'p',UL(:,:,4));
+    R = struct('rho',URcon(:,:,1), 'rho_u',URcon(:,:,2), 'rho_v',URcon(:,:,3), 'rho_E',URcon(:,:,4), 'u',UR(:,:,2), 'v',UR(:,:,3), 'p',UR(:,:,4));
 
-    F = 0.5*(FL + FR) - 0.5*smax*(UR - UL);
+    % left face flux
+    FL = L.rho .* L.u;
+    FL = cat(3, FL, (L.rho_u .* L.u + L.p));
+    FL = cat(3, FL, (L.rho_v .* L.u));
+    FL = cat(3, FL, ((L.rho_E + L.p) .* L.u));
+    % right face flux
+    FR = R.rho .* R.u;
+    FR = cat(3, FR, (R.rho_u .* R.u + R.p));
+    FR = cat(3, FR, (R.rho_v .* R.u));
+    FR = cat(3, FR, ((R.rho_E + R.p) .* R.u));
+    % other values
+    aL = sqrt(gamma .* L.p ./ L.rho);
+    aR = sqrt(gamma .* R.p ./ R.rho);
+    smax = max(abs(L.u) + aL, abs(R.u) + aR);
+
+    F = 0.5 .* (FL + FR) - 0.5 .* smax .* (URcon - ULcon); % TODO I think this should come out as Nx x Ny?
 end
+
+% --------------------
+% helper: Divergence of fluxes 
+% --------------------
+function RHSout = flow_divergence(Fx, Fy, dx, dy)
+
+% original unvectorised code
+% for j = 1:Ny
+%     for i = 1:Nx
+%         % flux differences
+%         Fx_in = squeeze(Fx(j,i+1,:)); 
+%         Fx_out = squeeze(Fx(j,i+0,:));
+%         Fy_in = squeeze(Fy(j+1,i,:)); 
+%         Fy_out = squeeze(Fy(j+0,i,:));
+%         RHSout(j,i,:) = - (Fx_in - Fx_out)/dx - (Fy_in - Fy_out)/dy;
+%     end
+% end
+
+Fx_out = Fx(2:end-1,1:end-1,:);
+Fx_in = Fx(2:end-1,2:end,:);
+Fy_out = Fy(1:end-1,2:end-1,:);
+Fy_in = Fy(2:end,2:end-1,:);
+
+RHSout = - (Fx_in - Fx_out)/dx - (Fy_in - Fy_out)/dy;
+
+end
+
+
+
+

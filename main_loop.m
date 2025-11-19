@@ -54,7 +54,7 @@ geometryObj = geometryObj.geoInterpret;
 
 % Physical parameters
 gamma = 1.4;                % ratio of specific heats
-Rgas = 287;                 % gas constant (not used explicitly if using p=(gamma-1)*rho*e)
+R = 287;                 % gas constant (not used explicitly if using p=(gamma-1)*rho*e)
 
 % Flow initial condition (uniform flow)
 rho0 = 1.0;                 % background density
@@ -87,7 +87,9 @@ CFL = app.CFLEditField.Value;                 % CFL number for stability
 tEnd = app.EndTimesEditField.Value;           % final time
 t = 0;                                          % initialise variable
 visc_alpha = app.ArtificialViscEditField.Value;  % artificial viscosity coeff (set >0 to add stabilization)
-boundary = app.BoundaryDropDown.Value;           % 'periodic' or 'wall' or 'outflow'
+
+boundaryTypes = app.boundaryTypes;           % 4x1 struct of bcs for each wall % TODO - make this include velocities so only 1 
+boundaryVelocities = app.boundaryVelocities;
 
 % diagnostics / plotting
 % figure('units','normalized','position',[0.1 0.1 0.6 0.6]);
@@ -115,17 +117,16 @@ while t < tEnd
     if t + dt > tEnd, dt = tEnd - t; end
 
     % RK2 (Heun): stage 1
-    U1 = Ucon + dt * RHS(Ucon, dx, dy, gamma, visc_alpha, boundary);
+    U1 = Ucon + dt * RHS(Ucon, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities);
     % stage 2
-    U2 = 0.5*(Ucon + U1 + dt * RHS(U1, dx, dy, gamma, visc_alpha, boundary));
+    U2 = 0.5*(Ucon + U1 + dt * RHS(U1, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities));
 
     Ucon = U2;
     Ucon = applyGeometryBCs(Ucon, geometryObj);
     t = t + dt;
 
-    Uprim = cons2prim(Ucon, gamma);
-    simulationData = simDataStore(Uprim, t); % for plotting we want primitive array, not conservative
-    simulationData = simulationData.MeshInfo(X, Y); % TODO - this might be inefficient to reassign every loop
+    U = cons2prim(Ucon, gamma);
+    simulationData = simDataStore(U, X, Y, gamma, R, t, geometryObj); % for plotting we want primitive array, not conservative
     app.simData = simulationData;
 
     % update flow visualiser occasionally
@@ -163,7 +164,7 @@ end
 % --------------------
 % RHS function (finite-volume / fluxes)
 % --------------------
-function RHSout = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary)
+function RHSout = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary, velocities)
     % Ucon: Ny x Nx x 4 array
     % returns dU/dt of same shape
 
@@ -171,21 +172,11 @@ function RHSout = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary)
     % For simplicity handle interior with one-sided for boundaries depending on 'boundary'
 
     % get primitives
-    density = Ucon(:,:,1);
-    u = Ucon(:,:,2)./density;
-    v = Ucon(:,:,3)./density;
-    E = Ucon(:,:,4)./density;
-    p = (gamma-1)*density.*(E - 0.5*(u.^2 + v.^2));
-    c = sqrt(max(gamma * p ./ density, 1e-12));
+    U = cons2prim(Ucon, gamma);
 
     % extend arrays for BCs
-    [rho_e, u_e, v_e, p_e] = applyWallBCs(density,u,v,p,boundary); % this adds 2 extra rows and 2 extra columns to all 4 ...
-    E_e = p_e./((gamma-1))./rho_e + 0.5*(u_e.^2 + v_e.^2);
-    Uext_con = zeros(size(rho_e,1), size(rho_e,2), 4); % ... hence this follows in to Uext 
-    Uext_con(:,:,1) = rho_e; 
-    Uext_con(:,:,2) = rho_e.*u_e; 
-    Uext_con(:,:,3) = rho_e.*v_e; 
-    Uext_con(:,:,4) = rho_e.*E_e;
+    Uext = applyWallBCs(U, boundary, velocities); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
+    Uext_con = prim2cons(Uext, gamma);
 
     % compute Rusanov flux, x-direction
     Fx = rusanov_flux(Uext_con, 'x', gamma); % TODO this is changing the size of the grid by 1 column in x
@@ -230,74 +221,6 @@ end
 % update
 Ucon = Ughost;
 
-end
-
-% --------------------
-% helper: applyWallBCs (simple padding)
-% --------------------
-function [rho_e, u_e, v_e, p_e] = applyWallBCs(rho,u,v,p,boundary)
-    % add one-cell padding around arrays (Ny+2 x Nx+2)
-    [Ny,Nx] = size(rho);
-    rho_e = zeros(Ny+2, Nx+2); u_e = rho_e; v_e = rho_e; p_e = rho_e;
-    rho_e(2:end-1,2:end-1) = rho; u_e(2:end-1,2:end-1) = u; v_e(2:end-1,2:end-1) = v; p_e(2:end-1,2:end-1) = p;
-
-    switch lower(boundary)
-        case 'periodic'
-            % left-right
-            rho_e(:,1)   = rho_e(:,end-1);
-            rho_e(:,end) = rho_e(:,2);
-            u_e(:,1)   = u_e(:,end-1);
-            u_e(:,end) = u_e(:,2);
-            v_e(:,1)   = v_e(:,end-1);
-            v_e(:,end) = v_e(:,2);
-            p_e(:,1)   = p_e(:,end-1);
-            p_e(:,end) = p_e(:,2);
-            % top-bottom
-            rho_e(1,:)   = rho_e(end-1,:);
-            rho_e(end,:) = rho_e(2,:);
-            u_e(1,:)   = u_e(end-1,:);
-            u_e(end,:) = u_e(2,:);
-            v_e(1,:)   = v_e(end-1,:);
-            v_e(end,:) = v_e(2,:);
-            p_e(1,:)   = p_e(end-1,:);
-            p_e(end,:) = p_e(2,:);
-        case 'wall'
-            % reflective wall for velocities, copy density/pressure
-            rho_e(:,1)   = rho_e(:,2); 
-            rho_e(:,end) = rho_e(:,end-1);
-            rho_e(1,:)   = rho_e(2,:); 
-            rho_e(end,:) = rho_e(end-1,:);
-            p_e(:,1)   = p_e(:,2); 
-            p_e(:,end) = p_e(:,end-1);
-            p_e(1,:)   = p_e(2,:); 
-            p_e(end,:) = p_e(end-1,:);
-            u_e(:,1)   = -u_e(:,2);
-            u_e(:,end) = -u_e(:,end-1);
-            u_e(1,:)   = -u_e(2,:); 
-            u_e(end,:) = -u_e(end-1,:);
-            v_e(:,1)   = -v_e(:,2); 
-            v_e(:,end) = -v_e(:,end-1);
-            v_e(1,:)   = -v_e(2,:); 
-            v_e(end,:) = -v_e(end-1,:);
-        otherwise
-            % default: outflow (copy)
-            rho_e(:,1)   = rho_e(:,2); 
-            rho_e(:,end) = rho_e(:,end-1);
-            rho_e(1,:)   = rho_e(2,:); 
-            rho_e(end,:) = rho_e(end-1,:);
-            p_e(:,1)   = p_e(:,2); 
-            p_e(:,end) = p_e(:,end-1);
-            p_e(1,:)   = p_e(2,:); 
-            p_e(end,:) = p_e(end-1,:);
-            u_e(:,1)   = u_e(:,2); 
-            u_e(:,end) = u_e(:,end-1);
-            u_e(1,:)   = u_e(2,:); 
-            u_e(end,:) = u_e(end-1,:);
-            v_e(:,1)   = v_e(:,2); 
-            v_e(:,end) = v_e(:,end-1);
-            v_e(1,:)   = v_e(2,:); 
-            v_e(end,:) = v_e(end-1,:);
-    end
 end
 
 % --------------------

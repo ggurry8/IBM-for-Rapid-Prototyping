@@ -43,7 +43,8 @@ y = linspace(dy/2, Ly-dy/2, Ny);
 [X,Y] = meshgrid(x,y);
 
 % Import Geometry
-[xGeometry, yGeometry] = aerofoil_generation(app.NACA4DigitCodeEditField.Value, app.ChordLengthEditField.Value, app.AngleofAttackEditField.Value, app.NumberofPointsEditField.Value);
+[xGeometry, yGeometry] = aerofoil_generation(app.NACA4DigitCodeEditField.Value, app.ChordLengthEditField.Value,...
+    app.AngleofAttackEditField.Value, app.NumberofPointsEditField.Value);
 xGeometry = xGeometry + Lx * app.CoordinatesofLeadingEdgeX.Value/100;
 yGeometry = yGeometry + Ly * app.CoordinatesofLeadingEdgeY.Value/100; % adjust position of leading edge
 geometryObj = geometry(X, Y, xGeometry, yGeometry);
@@ -60,15 +61,10 @@ R = 287;                 % gas constant (not used explicitly if using p=(gamma-1
 rho0 = 1.0;                 % background density
 U0 = app.InletVelocityEditField.Value;                   % background velocity in x
 V0 = 0.0;                   % background velocity in y
-p0 = 1.0;                   % background pressure
-
-% % small vortex / perturbation to see dynamics
-amp = 0; % removed for now
-xc = 0.5; yc = 0.5; rc = 0.1;
-r = sqrt((X-xc).^2 + (Y-yc).^2);
+p0 = 100000;                   % background pressure in Pa
 
 % primitive variables
-rho = rho0 * (1 + amp * exp(-(r/rc).^2));
+rho = rho0;
 U = U0 * ones(size(rho));
 V = V0 * ones(size(rho));
 p = p0 * ones(size(rho));
@@ -88,27 +84,26 @@ tEnd = app.EndTimesEditField.Value;           % final time
 t = 0;                                          % initialise variable
 visc_alpha = app.ArtificialViscEditField.Value;  % artificial viscosity coeff (set >0 to add stabilization)
 
-boundaryTypes = app.boundaryTypes;           % 4x1 struct of bcs for each wall % TODO - make this include velocities so only 1 
+boundaryTypes = app.boundaryTypes;           % 4x1 struct of bcs for each wall
 boundaryVelocities = app.boundaryVelocities;
+
+residuals = []; % initialise variable
 
 % diagnostics / plotting
 % figure('units','normalized','position',[0.1 0.1 0.6 0.6]);
-plotEvery = 10;
-frame = 1;
+plotEvery = app.UpdateFreqEditField.Value;
+iteration = 1;
 
 % minmod limiter
-minmod = @(a,b) (sign(a)+sign(b)).*min(abs(a),abs(b))/2 .* (sign(a)+sign(b)~=0);
+% minmod = @(a,b) (sign(a)+sign(b)).*min(abs(a),abs(b))/2 .* (sign(a)+sign(b)~=0); % TODO this isn't used
 
 % ---------------------
 % Main time loop
 % ---------------------
 while t < tEnd
     % compute primitive variables & flux Jacobian max wave speed
-    rho = Ucon(:,:,1);
-    u = Ucon(:,:,2)./rho;
-    v = Ucon(:,:,3)./rho;
-    E = Ucon(:,:,4)./rho;
-    p = (gamma-1)*rho.*(E - 0.5*(u.^2 + v.^2));
+    Uinitial = cons2prim(Ucon, gamma);
+    [rho, u, v, p] = deal(Uinitial(:,:,1), Uinitial(:,:,2), Uinitial(:,:,3), Uinitial(:,:,4)); % assign the primitives to individual variables
     c = sqrt(max(gamma * p ./ rho, 1e-12));
     Smax = max(max(sqrt(u.^2 + v.^2) + c));
 
@@ -117,36 +112,37 @@ while t < tEnd
     if t + dt > tEnd, dt = tEnd - t; end
 
     % RK2 (Heun): stage 1
-    U1 = Ucon + dt * RHS(Ucon, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities);
-    % stage 2
-    U2 = 0.5*(Ucon + U1 + dt * RHS(U1, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities));
+    [RHSout, iterationResiduals] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities);
+    residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
+    U1 = Ucon + dt * RHSout;
 
-    Ucon = U2;
+    % stage 2
+    U2 = 0.5 * (Ucon + U1 + dt * RHS(U1, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities));
+
+    Ucon = U2; % update Ucon with new values
     Ucon = applyGeometryBCs(Ucon, geometryObj);
     t = t + dt;
 
-    U = cons2prim(Ucon, gamma);
-    simulationData = simDataStore(U, X, Y, gamma, R, t, geometryObj); % for plotting we want primitive array, not conservative
-    app.simData = simulationData;
+    Ufinal = cons2prim(Ucon, gamma);
+    app.simData = simDataStore(Ufinal, X, Y, gamma, R, t, geometryObj, residuals);
 
     % update flow visualiser occasionally
-    if mod(frame,plotEvery)==0 || t>=tEnd
+    if mod(iteration,plotEvery)==0 || t>=tEnd
         varToDisplay = app.DisplayVarDropDown.Value;
-        flow_visualiser(app, varToDisplay)
+        flow_visualiser(app, varToDisplay);
+        plotResiduals(app.ResidualsPlot, iteration, residuals);
     end
 
     % perform end of loop checks
     app.SimulationTimeField.Value = t;
-    frame = frame + 1;
-    app.IterationNumberField.Value = frame;
+    iteration = iteration + 1;
+    app.IterationNumberField.Value = iteration;
     if app.TerminateSimProperty
         app.TerminateSimProperty = false; % reset property
         % pass data out of app
-        app.simData = simulationData;
         break
     elseif app.PauseSimulationButton.Value
         % pass sim data out of app
-        app.simData = simulationData;
         while app.PauseSimulationButton.Value
             if app.TerminateSimProperty
                 app.TerminateSimProperty = false; % reset property
@@ -156,15 +152,12 @@ while t < tEnd
         end
     end
 end
-
-fprintf('Done. Final time t = %g\n', t);
-
 end
 
 % --------------------
 % RHS function (finite-volume / fluxes)
 % --------------------
-function RHSout = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary, velocities)
+function [RHSout, residuals] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundary, velocities)
     % Ucon: Ny x Nx x 4 array
     % returns dU/dt of same shape
 
@@ -178,14 +171,24 @@ function RHSout = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary, velocities)
     Uext = applyWallBCs(U, boundary, velocities); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
     Uext_con = prim2cons(Uext, gamma);
 
-    % compute Rusanov flux, x-direction
-    Fx = rusanov_flux(Uext_con, 'x', gamma); % TODO this is changing the size of the grid by 1 column in x
+    % compute Rusanov flux, x-direction (faces perpendicular to x)
+    [F, UL_x, UR_x] = rusanov_flux(Uext_con, 'x', gamma);
 
-    % compute fluxes in y-direction
-    Fy = rusanov_flux(Uext_con, 'y', gamma); % TODO this is changing the size of the grid by 1 row in y
+    % compute Rusanov flux, y-direction (faces perpendicular to y)
+    [G, UL_y, UR_y] = rusanov_flux(Uext_con, 'y', gamma);
+
+    % compute viscosity
+    [mu_du_dx, mu_dv_dy] = diffusionTerm(UL_x, UR_x, UL_y, UR_y, dx, dy, R);
+
+    % fluxes including diffusion/viscosity
+    F = F - mu_du_dx;
+    G = G - mu_dv_dy;
+    
+    % residuals
+    residuals = residualsEuler(F, G, dx,dy);
 
     % assemble RHS via divergence of fluxes
-    RHSout = flow_divergence(Fx, Fy, dx, dy);
+    RHSout = flow_divergence(F, G, dx, dy);
 
     % optional explicit artificial viscosity (simple Laplacian on conserved variables)
     if visc_alpha > 0
@@ -217,10 +220,8 @@ for j = 2:size(Ucon,1)-1
         end
     end
 end
-
 % update
 Ucon = Ughost;
-
 end
 
 % --------------------
@@ -228,6 +229,7 @@ end
 % --------------------
 function RHSout = flow_divergence(Fx, Fy, dx, dy)
 
+% remove BCs
 Fx_out = Fx(2:end-1,1:end-1,:);
 Fx_in = Fx(2:end-1,2:end,:);
 Fy_out = Fy(1:end-1,2:end-1,:);

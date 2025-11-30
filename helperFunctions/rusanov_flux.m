@@ -5,9 +5,9 @@
 %         dir - x or y direction of flux computation
 %         gamma - ratio of specific heats
 % L & R denote the left and right faces of the cells relative to direction of flux computation (dir)
-function F = rusanov_flux(Uext_con, dir, gamma)
+function [F, UL, UR] = rusanov_flux(Uext_con, dir, gamma)
 
-    % matrix manipulation
+    % 1st order upwind differencing
     switch dir
         case 'x' % create left and right side of cell face arrays by removing the outer columns
             ULcon = Uext_con(:,1:end-1,:);
@@ -25,7 +25,7 @@ function F = rusanov_flux(Uext_con, dir, gamma)
 
     [FL, FR,  smax] = cellFaceFluxes(L, R, UL, UR, gamma, dir);
     
-    F = 0.5 .* (FL + FR) - 0.5 .* smax .* (URcon - ULcon); % TODO should this come out as Nx x Ny?
+    F = 0.5 .* (FL + FR) - 0.5 .* smax .* (URcon - ULcon);
 end
 
 % --------------------
@@ -33,7 +33,8 @@ end
 % --------------------
 function [FL, FR, smax] = cellFaceFluxes(L, R, UL, UR, gamma, dir)
 
-% initialise pressure terms
+% initialise pressure terms, set to 0 to ensure unassigned terms are ignored and don't
+% break this function later on
 pxL = 0;
 pxR = 0;
 pyL = 0;
@@ -55,7 +56,6 @@ switch dir
         % pressure term required in third element of flux array only for y dir
         pyL = UR(:,:,4);    
         pyR = UR(:,:,4);
-        
 end
 
 % left face flux

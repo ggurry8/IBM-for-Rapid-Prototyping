@@ -1,30 +1,37 @@
-function [continuityResidual, xMomentumResidual, yMomentumResidual] = residualsEuler(U1, U2, dx, dy)
-% U1 - discretised flow field variables (rho, u, v, P) elements 1-4 of 3rd dimension of iteration i
-% U2 - discretised flow field variables (rho, u, v, P) elements 1-4 of 3rd dimension of iteration i
+function residuals = residualsEuler(F, G, dx, dy)
+
+% residuals - 4 x 1 column vector of continuityResidual, xMomentumResidual,  yMomentumResidual, energyResidual
+
+% F, G - fluxes in west-east direction and south-north direction
 % dx, dy - grid spacing in x, y ----- THESE MUST BE CONSTANTS -----
 
-[rho1, u1, v1, p1] = deal(U1(:,:,1), U1(:,:,2), U1(:,:,3), U1(:,:,4));
-[rho2, u2, v2, p2] = deal(U2(:,:,1), U1(:,:,2), U1(:,:,3), U1(:,:,4));
 
-% continuity eqn.
-% du/dx + dv/dy = 0 
-continuityResidual = max((rho2 .* u2 - rho1 .* u1)/dx + (rho2 .* v2 - rho1 .* v1)/dy,[], "all"); 
+FL = F(:,1:end-1,:);
+FR = F(:,2:end,:);
+GL = G(1:end-1,:,:);
+GR = G(2:end,:,:);
 
-% x-momentum eqn.
-% (d rho u^2)/dx + (d rho uv)/dy + dp/dx = 0
-d_rho_u2 = ((rho2 .* u2 .^ 2) - (rho1 .* u1 .^ 2));
-d_rho_uv = ((rho2 .* u2 .* v2) - (rho1 .* u1 .* v1));
-dp =  p2 - p1;
-xMomentumResidual = max(d_rho_u2/dx + d_rho_uv/dy + dp/dx,[], "all");
+% Continuity
+RFC = max((FR(:,:,1) - FL(:,:,1))/dx, [], "all");
+RGC = max((GR(:,:,1) - GL(:,:,1))/dy, [], 'all');
+continuityResidual = max(RFC, RGC);
 
-% y-momentum eqn.
-% (d rho uv)/dx + (d rho v^2)/dy + dp/dy = 0
-d_rho_v2 = ((rho2 .* v2 .^ 2) - (rho1 .* v1 .^ 2));
-yMomentumResidual =  max(d_rho_uv/dx + d_rho_v2/dy + dp/dy,[], "all");
 
-% EoS (Ideal Gas)
-% P - rho * R * T = 0
+% X-Momentum
+RFX = max((FR(:,:,2) - FL(:,:,2))/dx, [], "all");
+RGX = max((GR(:,:,2) - GL(:,:,2))/dy, [], 'all');
+xMomentumResidual = max(RFX, RGX);
 
-idealGasResidual = (p2 - p1);
+% Y-Momentum
+RFY = max((FR(:,:,3) - FL(:,:,3))/dx, [], "all");
+RGY = max((GR(:,:,3) - GL(:,:,3))/dy, [], 'all');
+yMomentumResidual = max(RFY, RGY);
+
+% Energy
+RFE = max((FR(:,:,4) - FL(:,:,4))/dx, [], "all");
+RGE = max((GR(:,:,4) - GL(:,:,4))/dy, [], 'all');
+energyResidual = max(RFE, RGE);
+
+residuals = [continuityResidual, xMomentumResidual,  yMomentumResidual, energyResidual];
 
 end

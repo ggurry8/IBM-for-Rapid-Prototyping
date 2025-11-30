@@ -1,4 +1,4 @@
-function flow_visualiser(app, param) % simData should be simDataStore class
+function flowFieldPlot = flow_visualiser(app, param) % simData should be simDataStore class
    
     % extract variables from simData
     param = string(param);
@@ -45,19 +45,20 @@ function flow_visualiser(app, param) % simData should be simDataStore class
     
     imageSizeX = [x(1) x(end)];
     imageSizeY = [y(1) y(end)];
-    imagesc(app.FlowVisualiser, imageSizeX, imageSizeY, dataToDisplay);
+    flowFieldPlot = imagesc(app.FlowVisualiser, imageSizeX, imageSizeY, dataToDisplay);
 
     % plot geometry shape if requested
     if app.OverlayGeometryCheckBox.Value
         xGeometry = geometryData.XYGeometry(:,1);
         yGeometry = geometryData.XYGeometry(:,2);
-        hold(app.FlowVisualiser, "on")
-        plot(app.FlowVisualiser, xGeometry, yGeometry, "r")
-        hold(app.FlowVisualiser, "off")
+        hold(app.FlowVisualiser, "on");
+        plot(app.FlowVisualiser, xGeometry, yGeometry, "r");
+        hold(app.FlowVisualiser, "off");
     end
 
     set(app.FlowVisualiser, 'YDir', 'normal');
-    title(app.FlowVisualiser, sprintf('%s at t = %.4f', param, t));
+    title(app.FlowVisualiser, sprintf('%s', param));
+    %title(app.FlowVisualiser, sprintf('%s at t = %.4f', param, t));
     colourbar = colorbar(app.FlowVisualiser);
     colourbar.Label.String = colourbarLabel;
     app.SimulationTimeField.Value = t;

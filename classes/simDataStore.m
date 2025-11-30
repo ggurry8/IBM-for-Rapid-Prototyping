@@ -12,10 +12,11 @@ classdef simDataStore
         time double
         meshGridXY 
         geometryData geometry
+        residuals
     end
 
     methods
-        function simDataStore = simDataStore(U, X, Y, gamma, R, t, geometryObj)
+        function simDataStore = simDataStore(U, X, Y, gamma, R, t, geometryObj, residuals)
             % simData - Construct an instance of this class
             simDataStore.density = U(:,:,1);
             simDataStore.xVelocity = U(:,:,2);
@@ -26,6 +27,7 @@ classdef simDataStore
             simDataStore.time = t;
             simDataStore.geometryData = geometryObj;
             simDataStore.meshGridXY = cat(3, X, Y);
+            simDataStore.residuals = residuals;
         end
     end
 end

@@ -59,10 +59,10 @@ switch dir
 end
 
 % left face flux
-FL = L.rho .* velocityL;
-FL = cat(3, FL, (L.rho_u .* velocityL) + pxL);
-FL = cat(3, FL, (L.rho_v .* velocityL) + pyL);
-FL = cat(3, FL, ((L.rho_E + L.p) .* velocityL));
+FL = L.rho .* velocityL; % Continuity
+FL = cat(3, FL, (L.rho_u .* velocityL) + pxL); % x-momentum
+FL = cat(3, FL, (L.rho_v .* velocityL) + pyL); % y-momentum
+FL = cat(3, FL, ((L.rho_E + L.p) .* velocityL)); % Energy
 % right face flux
 FR = R.rho .* velocityR;
 FR = cat(3, FR, (R.rho_u .* velocityR) + pxR);

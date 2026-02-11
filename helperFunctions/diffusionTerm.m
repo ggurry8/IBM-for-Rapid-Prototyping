@@ -10,8 +10,8 @@ function [mu_du_dx, mu_dv_dy] = diffusionTerm(UL_x, UR_x, UL_y, UR_y, dx, dy, R)
 [rhoR_y, ~, ~, pR_y] = deal(UR_y(:,:,1), UR_y(:,:,2), UR_y(:,:,3), UR_y(:,:,4));
 
 % 
-T_x = (pR_x ./ (rhoR_x .* R) + pL_x ./ (rhoL_x .* R)/2); % Temperature face centered value (along x)
-T_y = (pR_y ./ (rhoR_y .* R) + pL_y ./ (rhoL_y .* R)/2); % Temperature face centered value (along x)
+T_x = (pR_x ./ (rhoR_x .* R) + pL_x ./ (rhoL_x .* R))/2; % Temperature face centered value (along x)
+T_y = (pR_y ./ (rhoR_y .* R) + pL_y ./ (rhoL_y .* R))/2; % Temperature face centered value (along x)
 
 % coefficients
 % mu_ref = 1.716 * 10 ^ -5;

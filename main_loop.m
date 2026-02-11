@@ -41,15 +41,20 @@ dx = Lx / Nx; dy = Ly / Ny; % grid spacing (x,y)
 x = linspace(dx/2, Lx-dx/2, Nx);
 y = linspace(dy/2, Ly-dy/2, Ny);
 [X,Y] = meshgrid(x,y);
+minGridSpacing = min(dx,dy);
 
 % Import Geometry
-[xGeometry, yGeometry] = aerofoil_generation(app.NACA4DigitCodeEditField.Value, app.ChordLengthEditField.Value,...
+NACA4Code = app.NACA4DigitCodeEditField.Value;
+chordLength = app.ChordLengthEditField.Value;
+thickPcent = str2double([NACA4Code(3:4)])/100;
+refA = thickPcent * chordLength;
+[xGeometry, yGeometry] = aerofoil_generation(NACA4Code, chordLength,...
     app.AngleofAttackEditField.Value, app.NumberofPointsEditField.Value);
 xGeometry = xGeometry + Lx * app.CoordinatesofLeadingEdgeX.Value/100;
 yGeometry = yGeometry + Ly * app.CoordinatesofLeadingEdgeY.Value/100; % adjust position of leading edge
 geometryObj = geometry(X, Y, xGeometry, yGeometry);
 if ~any(geometryObj.withinGeometry,"all")
-    uialert(app, "Geometry may be too large relative to grid size",'Warning: ','Icon','Warning')
+    uialert(app.UIFigure, "Geometry may be too large relative to grid size",'Warning: ','Icon','Warning')
 end
 geometryObj = geometryObj.geoInterpret;
 
@@ -58,10 +63,11 @@ gamma = 1.4;                % ratio of specific heats
 R = 287;                 % gas constant (not used explicitly if using p=(gamma-1)*rho*e)
 
 % Flow initial condition (uniform flow)
-rho0 = 1.0;                 % background density
+rho0 = 1.225;                 % background density
 U0 = app.InletVelocityEditField.Value;                   % background velocity in x
 V0 = 0.0;                   % background velocity in y
 p0 = 100000;                   % background pressure in Pa
+freestreamConditions = [rho0, U0, V0, p0];
 
 % primitive variables
 rho = rho0;
@@ -77,6 +83,15 @@ Ucon(:,:,1) = rho;       % conservative variable flow properties
 Ucon(:,:,2) = rho .* U;
 Ucon(:,:,3) = rho .* V;
 Ucon(:,:,4) = rhoe;
+
+% determine initial Reynolds and Mach Numbers (WARNING: may be incorrect if inlet x velocity not set correctly or crossflow)
+velFS = app.InletVelocityEditField.Value;
+L_char = app.ChordLengthEditField.Value;
+T0 = (p0 ./ (rho0 .* R));
+Re0 = determineRe(velFS, L_char, rho0, T0);
+app.ReynoldsNumberEditField.Value = Re0;
+M0 = velFS / sqrt(gamma * R * T0);
+app.MachNoEditField.Value = M0;
 
 % solver parameters
 CFL = app.CFLEditField.Value;                 % CFL number for stability
@@ -107,17 +122,22 @@ while t < tEnd
     c = sqrt(max(gamma * p ./ rho, 1e-12));
     Smax = max(max(sqrt(u.^2 + v.^2) + c));
 
-    % timestep from CFL
-    dt = CFL * min(dx,dy) / Smax;
+    % set CFL -> timestep from CFL
+    % CFL = CFL_Controller(CFL0, U); - TODO implement CFL controlling
+    dt = CFL * minGridSpacing / Smax;
     if t + dt > tEnd, dt = tEnd - t; end
 
     % RK2 (Heun): stage 1
-    [RHSout, iterationResiduals] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities);
-    residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
+    RKstage = 1;
+    [RHSout, ~, ~] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA);
     U1 = Ucon + dt * RHSout;
 
     % stage 2
-    U2 = 0.5 * (Ucon + U1 + dt * RHS(U1, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities));
+    RKstage = 2;
+    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA);
+    residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
+    app.C_DEditField.Value = iterationCoefficients(1);
+    U2 = 0.5 * (Ucon + U1 + dt * RHSoutS2);
 
     Ucon = U2; % update Ucon with new values
     Ucon = applyGeometryBCs(Ucon, geometryObj);
@@ -157,7 +177,7 @@ end
 % --------------------
 % RHS function (finite-volume / fluxes)
 % --------------------
-function [RHSout, residuals] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundary, velocities)
+function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA)
     % Ucon: Ny x Nx x 4 array
     % returns dU/dt of same shape
 
@@ -168,8 +188,8 @@ function [RHSout, residuals] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundary,
     U = cons2prim(Ucon, gamma);
 
     % extend arrays for BCs
-    Uext = applyWallBCs(U, boundary, velocities); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
-    Uext_con = prim2cons(Uext, gamma);
+    Uext = applyWallBCs(U, boundary, velocities, freestreamConditions); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
+    Uext_con = prim2cons(Uext, gamma); % get conservative vars for padded arrays
 
     % compute Rusanov flux, x-direction (faces perpendicular to x)
     [F, UL_x, UR_x] = rusanov_flux(Uext_con, 'x', gamma);
@@ -183,12 +203,48 @@ function [RHSout, residuals] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundary,
     % fluxes including diffusion/viscosity
     F = F - mu_du_dx;
     G = G - mu_dv_dy;
-    
-    % residuals
-    residuals = residualsEuler(F, G, dx,dy);
+
+    % Force Coeffs
+    if stage == 2
+        contVolFaces = boundBox(geoObj);
+        [xContIndices, yContIndices] = find(contVolFaces);
+
+        % find left and right (y-normal) faces
+        yContIndMin = min(yContIndices);
+        yContIndMax = max(yContIndices);
+
+        % Find top and bottom (x-normal) faces
+        xContIndMin = min(xContIndices);
+        xContIndMax = max(xContIndices);
+        
+        % Find fluxes 
+        xMomFluxXdir = F(:,:,2);
+        xMomFluxMaskXdir = zeros(size(xMomFluxXdir));
+        xMomFluxMaskXdir(xContIndMin:xContIndMax, yContIndMin) = 1; % left face
+        xMomFluxMaskXdir(xContIndMin:xContIndMax, yContIndMax) = -1; % right face
+        xMomFluxXdirMasked = xMomFluxXdir .* xMomFluxMaskXdir; % apply mask 
+
+        xMomFluxYdir = G(:,:,2);
+        xMomFluxMaskYdir = zeros(size(xMomFluxYdir));
+        xMomFluxMaskYdir(xContIndMin, yContIndMin:yContIndMax) = true; % top face - TODO might be unnecessary for drag
+        xMomFluxMaskYdir(xContIndMax, yContIndMin:yContIndMax) = true; % bottom face - TODO might be unnecessary
+        xMomFluxYdirMasked = xMomFluxYdir .* xMomFluxMaskYdir; % apply mask
+
+        drag = sum(xMomFluxXdirMasked, 'all') * dy + sum(xMomFluxYdirMasked, 'all') * dx;
+        dragCoeff = 2 * drag / (rho0 * velFS ^ 2 * refA);
+        
+        forceCoefficients = [dragCoeff]; % TODO - add other coeffs
+    else 
+        forceCoefficients = [];
+    end
 
     % assemble RHS via divergence of fluxes
     RHSout = flow_divergence(F, G, dx, dy);
+
+    % residuals
+    for idx = 1:4
+        currentResiduals(idx) = max(abs(RHSout(:,:,idx)), [], "all"); %#ok - 4 elements is tiny memory wise
+    end
 
     % optional explicit artificial viscosity (simple Laplacian on conserved variables)
     if visc_alpha > 0

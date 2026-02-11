@@ -1,5 +1,11 @@
-function flowFieldPlot = flow_visualiser(app, param) % simData should be simDataStore class
+function flowFieldPlot = flow_visualiser(app, param, target) % simData should be simDataStore class
    
+arguments
+    app 
+    param
+    target = app.FlowVisualiser
+end
+
     % extract variables from simData
     param = string(param);
     simData = app.simData;
@@ -45,21 +51,26 @@ function flowFieldPlot = flow_visualiser(app, param) % simData should be simData
     
     imageSizeX = [x(1) x(end)];
     imageSizeY = [y(1) y(end)];
-    flowFieldPlot = imagesc(app.FlowVisualiser, imageSizeX, imageSizeY, dataToDisplay);
+    flowFieldPlot = imagesc(target, imageSizeX, imageSizeY, dataToDisplay);
+    colourmap = parula;
+    colormap(target,colourmap(1:230,:))
+    grid(target, "on")
 
     % plot geometry shape if requested
     if app.OverlayGeometryCheckBox.Value
         xGeometry = geometryData.XYGeometry(:,1);
         yGeometry = geometryData.XYGeometry(:,2);
-        hold(app.FlowVisualiser, "on");
-        plot(app.FlowVisualiser, xGeometry, yGeometry, "r");
-        hold(app.FlowVisualiser, "off");
+        hold(target, "on");
+        plot(target, xGeometry, yGeometry, "r", LineWidth=1);
+        hold(target, "off");
     end
 
-    set(app.FlowVisualiser, 'YDir', 'normal');
-    title(app.FlowVisualiser, sprintf('%s', param));
-    %title(app.FlowVisualiser, sprintf('%s at t = %.4f', param, t));
-    colourbar = colorbar(app.FlowVisualiser);
+    % set(target, 'YDir', 'normal'); % TODO this flips the flow field
+    % upside down which causes problems with top/bottom bcs so removed for
+    % now
+    title(target, sprintf('%s', param));
+    %title(target, sprintf('%s at t = %.4f', param, t));
+    colourbar = colorbar(target);
     colourbar.Label.String = colourbarLabel;
     app.SimulationTimeField.Value = t;
     drawnow;

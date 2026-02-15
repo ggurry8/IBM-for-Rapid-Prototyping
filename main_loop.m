@@ -11,10 +11,6 @@
 % - Optional explicit (artificial) viscosity for stabilization
 %
 % Notes:
-% - Intended for low-Mach demonstration (M < 0.2). For very low Mach numbers
-%   consider preconditioning (not implemented here) or use an incompressible solver.
-% - Boundary conditions: options for periodic / wall / inflow-outflow are included.
-% - This code is intentionally simple and readable, not optimized for performance.
 %
 % Notations (WIP)
 % FLOW:
@@ -129,18 +125,19 @@ while t < tEnd
 
     % RK2 (Heun): stage 1
     RKstage = 1;
-    [RHSout, ~, ~] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA);
+    [RHSout, ~, ~] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
     U1 = Ucon + dt * RHSout;
 
     % stage 2
     RKstage = 2;
-    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA);
+    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
+
     residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
+    
     app.C_DEditField.Value = iterationCoefficients(1);
     U2 = 0.5 * (Ucon + U1 + dt * RHSoutS2);
 
     Ucon = U2; % update Ucon with new values
-    Ucon = applyGeometryBCs(Ucon, geometryObj);
     t = t + dt;
 
     Ufinal = cons2prim(Ucon, gamma);
@@ -177,7 +174,7 @@ end
 % --------------------
 % RHS function (finite-volume / fluxes)
 % --------------------
-function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA)
+function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt)
     % Ucon: Ny x Nx x 4 array
     % returns dU/dt of same shape
 
@@ -203,6 +200,9 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
     % fluxes including diffusion/viscosity
     F = F - mu_du_dx;
     G = G - mu_dv_dy;
+
+    % Apply IBM boundary conditions
+    S = applyGeometryBCs(Ucon, geoObj, gamma, dt);
 
     % Force Coeffs
     if stage == 2
@@ -238,8 +238,8 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
         forceCoefficients = [];
     end
 
-    % assemble RHS via divergence of fluxes
-    RHSout = flow_divergence(F, G, dx, dy);
+    % assemble RHS via divergence of fluxes including IBM source terms
+    RHSout = flow_divergence(F, G, dx, dy) + S;
 
     % residuals
     for idx = 1:4
@@ -260,27 +260,6 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
 end
 
 % --------------------
-% helper: applyGeometryBCs (simple padding)
-% --------------------
-function Ucon = applyGeometryBCs(Ucon, geometryObj)
-
-% preallocate Ughost
-Ughost = Ucon; % initialise variable
-
-% loop through fluid cells within or bordering the geometry
-for j = 2:size(Ucon,1)-1
-    for i = 2:size(Ucon,2)-1
-        if geometryObj.geometryBorder(j,i) || geometryObj.withinGeometry(j,i)
-            Ughost(j,i,2) = 0; % x velocity
-            Ughost(j,i,3) = 0; % y velocity
-        end
-    end
-end
-% update
-Ucon = Ughost;
-end
-
-% --------------------
 % helper: Divergence of fluxes 
 % --------------------
 function RHSout = flow_divergence(Fx, Fy, dx, dy)
@@ -294,4 +273,3 @@ Fy_in = Fy(2:end,2:end-1,:);
 RHSout = - (Fx_in - Fx_out)/dx - (Fy_in - Fy_out)/dy;  % this is essentially Fxdx/dV - Fdy/dV, but cancelled out
 
 end
-

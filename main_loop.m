@@ -91,6 +91,7 @@ app.MachNoEditField.Value = M0;
 
 % solver parameters
 CFL = app.CFLEditField.Value;                 % CFL number for stability
+holdCFL = 0;                                  % initialise variable
 tEnd = app.EndTimesEditField.Value;           % final time
 t = 0;                                          % initialise variable
 visc_alpha = app.ArtificialViscEditField.Value;  % artificial viscosity coeff (set >0 to add stabilization)
@@ -119,24 +120,23 @@ while t < tEnd
     Smax = max(max(sqrt(u.^2 + v.^2) + c));
 
     % set CFL -> timestep from CFL
-    % CFL = CFL_Controller(CFL0, U); - TODO implement CFL controlling
+    [CFL, holdCFL] = CFL_Controller(CFL, holdCFL, residuals, iteration-1);
+    app.CurrentCFLEditField.Value = CFL;
     dt = CFL * minGridSpacing / Smax;
     if t + dt > tEnd, dt = tEnd - t; end
 
-    % RK2 (Heun): stage 1
+    % RK2 (Heun): stage 1 (predictor)
     RKstage = 1;
     [RHSout, ~, ~] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
     U1 = Ucon + dt * RHSout;
 
-    % stage 2
+    % stage 2 
     RKstage = 2;
     [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
-
     residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
-    
     app.C_DEditField.Value = iterationCoefficients(1);
-    U2 = 0.5 * (Ucon + U1 + dt * RHSoutS2);
 
+    U2 = 0.5 * (Ucon + U1 + dt * RHSoutS2);
     Ucon = U2; % update Ucon with new values
     t = t + dt;
 
@@ -168,6 +168,7 @@ while t < tEnd
             pause(1)
         end
     end
+    drawnow limitrate
 end
 end
 
@@ -207,33 +208,9 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
     % Force Coeffs
     if stage == 2
         contVolFaces = boundBox(geoObj);
-        [xContIndices, yContIndices] = find(contVolFaces);
-
-        % find left and right (y-normal) faces
-        yContIndMin = min(yContIndices);
-        yContIndMax = max(yContIndices);
-
-        % Find top and bottom (x-normal) faces
-        xContIndMin = min(xContIndices);
-        xContIndMax = max(xContIndices);
-        
-        % Find fluxes 
-        xMomFluxXdir = F(:,:,2);
-        xMomFluxMaskXdir = zeros(size(xMomFluxXdir));
-        xMomFluxMaskXdir(xContIndMin:xContIndMax, yContIndMin) = 1; % left face
-        xMomFluxMaskXdir(xContIndMin:xContIndMax, yContIndMax) = -1; % right face
-        xMomFluxXdirMasked = xMomFluxXdir .* xMomFluxMaskXdir; % apply mask 
-
-        xMomFluxYdir = G(:,:,2);
-        xMomFluxMaskYdir = zeros(size(xMomFluxYdir));
-        xMomFluxMaskYdir(xContIndMin, yContIndMin:yContIndMax) = true; % top face - TODO might be unnecessary for drag
-        xMomFluxMaskYdir(xContIndMax, yContIndMin:yContIndMax) = true; % bottom face - TODO might be unnecessary
-        xMomFluxYdirMasked = xMomFluxYdir .* xMomFluxMaskYdir; % apply mask
-
-        drag = sum(xMomFluxXdirMasked, 'all') * dy + sum(xMomFluxYdirMasked, 'all') * dx;
-        dragCoeff = 2 * drag / (rho0 * velFS ^ 2 * refA);
-        
-        forceCoefficients = [dragCoeff]; % TODO - add other coeffs
+        forces = calculateForces(contVolFaces, F, G, dx, dy);
+        dragCoeff = 2 * forces(1) / (rho0 * velFS ^ 2 * refA);
+        forceCoefficients = dragCoeff; % TODO - add other coeffs
     else 
         forceCoefficients = [];
     end

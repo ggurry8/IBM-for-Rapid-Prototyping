@@ -11,6 +11,7 @@
 % - Optional explicit (artificial) viscosity for stabilization
 %
 % Notes:
+% This code requires the Image Processing and App Designer Toolboxes to function correctly.
 %
 % Notations (WIP)
 % FLOW:
@@ -105,9 +106,6 @@ residuals = []; % initialise variable
 % figure('units','normalized','position',[0.1 0.1 0.6 0.6]);
 plotEvery = app.UpdateFreqEditField.Value;
 iteration = 1;
-
-% minmod limiter
-% minmod = @(a,b) (sign(a)+sign(b)).*min(abs(a),abs(b))/2 .* (sign(a)+sign(b)~=0); % TODO this isn't used
 
 % ---------------------
 % Main time loop

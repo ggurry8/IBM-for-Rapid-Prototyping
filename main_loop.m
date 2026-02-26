@@ -2,12 +2,13 @@
 % Original GPT chat - https://chatgpt.com/share/68dfd53a-d1d4-8011-9519-0565c66807f9
 % The code from this chat is located within the same directory as this file and is called "GPT_original.m"
 
-%% simple_2D_compressible_CFD_solver.m
-% A minimal 2D explicit finite-volume compressible Euler solver (ideal gas)
-% - Structured Cartesian grid
-% - Rusanov (local Lax-Friedrichs) numerical flux
+%% main_loop.m
+% Core function for controlling the 2D explicit finite-volume compressible (ideal gas) N-S solver for testing IBM approaches.
+% - Uniform Structured Cartesian grid
+% - HLLC numerical flux
 % - Second-order MUSCL reconstruction with minmod limiter
 % - RK2 (Heun) time integration
+% - Immersed Boundary Methods
 % - Optional explicit (artificial) viscosity for stabilization
 %
 % Notes:
@@ -111,7 +112,7 @@ iteration = 1;
 % Main time loop
 % ---------------------
 while t < tEnd
-    % compute primitive variables & flux Jacobian max wave speed
+    % compute primitive variables & wave speeds (HLLC)
     Uinitial = cons2prim(Ucon, gamma);
     [rho, u, v, p] = deal(Uinitial(:,:,1), Uinitial(:,:,2), Uinitial(:,:,3), Uinitial(:,:,4)); % assign the primitives to individual variables
     c = sqrt(max(gamma * p ./ rho, 1e-12));
@@ -187,11 +188,12 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
     Uext = applyWallBCs(U, boundary, velocities, freestreamConditions); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
     Uext_con = prim2cons(Uext, gamma); % get conservative vars for padded arrays
 
-    % compute Rusanov flux, x-direction (faces perpendicular to x)
-    [F, UL_x, UR_x] = rusanov_flux(Uext_con, 'x', gamma);
+    forcingMask = geoObj.geometryBorder + geoObj.withinGeometry;
+    % compute HLLC flux, x-direction (faces perpendicular to x)
+    [F, UL_x, UR_x] = HLLC(Uext_con, 'x', gamma, dt, forcingMask);
 
-    % compute Rusanov flux, y-direction (faces perpendicular to y)
-    [G, UL_y, UR_y] = rusanov_flux(Uext_con, 'y', gamma);
+    % compute HLLC flux, y-direction (faces perpendicular to y)
+    [G, UL_y, UR_y] = HLLC(Uext_con, 'y', gamma, dt, forcingMask);
 
     % compute viscosity
     [mu_du_dx, mu_dv_dy] = diffusionTerm(UL_x, UR_x, UL_y, UR_y, dx, dy, R);
@@ -200,8 +202,18 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
     F = F - mu_du_dx;
     G = G - mu_dv_dy;
 
-    % Apply IBM boundary conditions
-    S = applyGeometryBCs(Ucon, geoObj, gamma, dt);
+    % % Apply IBM boundary conditions and assemble RHS via divergence of fluxes including IBM source terms
+    % RHSout = applyIBMForcing(Ucon, geoObj, gamma, dt, F, G, dx, dy);
+
+    %% Appply momentum forcing and update velocities
+    % remove ghost BC cells
+    F_out = F(2:end-1,1:end-1,:);
+    F_in = F(2:end-1,2:end,:);
+    G_out = G(1:end-1,2:end-1,:);
+    G_in = G(2:end,2:end-1,:);
+
+    % determine momentum and density fluxes
+    RHSout = - (F_out - F_in)/dx - (G_out - G_in)/dy;  % this is essentially Fxdx/dV - Fdy/dV, but cancelled out
 
     % Force Coeffs
     if stage == 2
@@ -212,9 +224,6 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
     else 
         forceCoefficients = [];
     end
-
-    % assemble RHS via divergence of fluxes including IBM source terms
-    RHSout = flow_divergence(F, G, dx, dy) + S;
 
     % residuals
     for idx = 1:4
@@ -232,19 +241,4 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
         end
         RHSout = RHSout + visc_alpha * lap;
     end
-end
-
-% --------------------
-% helper: Divergence of fluxes 
-% --------------------
-function RHSout = flow_divergence(Fx, Fy, dx, dy)
-
-% remove BCs
-Fx_out = Fx(2:end-1,1:end-1,:);
-Fx_in = Fx(2:end-1,2:end,:);
-Fy_out = Fy(1:end-1,2:end-1,:);
-Fy_in = Fy(2:end,2:end-1,:);
-
-RHSout = - (Fx_in - Fx_out)/dx - (Fy_in - Fy_out)/dy;  % this is essentially Fxdx/dV - Fdy/dV, but cancelled out
-
 end

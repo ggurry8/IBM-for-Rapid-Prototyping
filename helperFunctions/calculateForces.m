@@ -19,7 +19,7 @@ xMomFluxXdirMasked = xMomFluxXdir .* xMomFluxMaskXdir; % apply mask
 xMomFluxYdir = G(:,:,2);
 xMomFluxMaskYdir = zeros(size(xMomFluxYdir));
 xMomFluxMaskYdir(xContIndMin, yContIndMin:yContIndMax) = 1; % top face - TODO might be unnecessary for drag
-xMomFluxMaskYdir(xContIndMax, yContIndMin:yContIndMax) = 1; % bottom face - TODO might be unnecessary
+xMomFluxMaskYdir(xContIndMax, yContIndMin:yContIndMax) = -1; % bottom face - TODO might be unnecessary
 xMomFluxYdirMasked = xMomFluxYdir .* xMomFluxMaskYdir; % apply mask
 
 drag = sum(xMomFluxXdirMasked, 'all') * dy + sum(xMomFluxYdirMasked, 'all') * dx;

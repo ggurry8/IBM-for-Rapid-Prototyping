@@ -1,8 +1,8 @@
-function plotResiduals(targetAxes, iteration, residuals)
+function plotResiduals(targetAxes, time, residuals)
 
-semilogy(targetAxes, 1:iteration, normalize(residuals, "range")); % for non normalised residuals - just use residuals
+semilogy(targetAxes, time, normalize(residuals, "range")); % for non normalised residuals - just use residuals
 title(targetAxes, "Residuals")
-xlabel(targetAxes, "Iteration")
+xlabel(targetAxes, "Physical Time (s)")
 ylabel(targetAxes, "Normalised Residual")
 legend(targetAxes, "Continuity", "X-Momentum", "Y-Momentum", "Energy")
 grid(targetAxes, "on")

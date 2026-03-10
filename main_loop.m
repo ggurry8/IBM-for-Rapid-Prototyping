@@ -3,9 +3,9 @@
 % The code from this chat is located within the same directory as this file and is called "GPT_original.m"
 
 %% simple_2D_compressible_CFD_solver.m
-% A minimal 2D explicit finite-volume compressible Euler solver (ideal gas)
+% A 2D explicit finite-volume compressible N-S solver (ideal gas)
 % - Structured Cartesian grid
-% - Rusanov (local Lax-Friedrichs) numerical flux
+% - HLL numerical flux
 % - Second-order MUSCL reconstruction with minmod limiter
 % - RK2 (Heun) time integration
 % - Optional explicit (artificial) viscosity for stabilization
@@ -56,15 +56,25 @@ end
 geometryObj = geometryObj.geoInterpret;
 
 % Physical parameters
-gamma = 1.4;                % ratio of specific heats
-R = 287;                 % gas constant (not used explicitly if using p=(gamma-1)*rho*e)
+gamma = 1.4;            % ratio of specific heats
+R = 287;                % gas constant (not used explicitly if using p=(gamma-1)*rho*e)
+mu = 0.0084035;         % enforce viscosity for Re = 1e-4
 
 % Flow initial condition (uniform flow)
 rho0 = 1.225;                 % background density
 U0 = app.InletVelocityEditField.Value;                   % background velocity in x
-V0 = 0.0;                   % background velocity in y
-p0 = 100000;                   % background pressure in Pa
+V0 = 0.0;                     % background velocity in y
+p0 = 101325;                  % background pressure in Pa
 freestreamConditions = [rho0, U0, V0, p0];
+
+% determine initial Reynolds and Mach Numbers (WARNING: may be incorrect if inlet x velocity not set correctly or crossflow)
+velFS = app.InletVelocityEditField.Value;
+L_char = app.ChordLengthEditField.Value;
+T0 = (p0 ./ (rho0 .* R));
+Re0 = rho0 * U0 * L_char / mu;
+app.ReynoldsNumberEditField.Value = Re0;
+M0 = velFS / sqrt(gamma * R * T0);
+app.MachNoEditField.Value = M0;
 
 % primitive variables
 rho = rho0;
@@ -81,18 +91,8 @@ Ucon(:,:,2) = rho .* U;
 Ucon(:,:,3) = rho .* V;
 Ucon(:,:,4) = rhoe;
 
-% determine initial Reynolds and Mach Numbers (WARNING: may be incorrect if inlet x velocity not set correctly or crossflow)
-velFS = app.InletVelocityEditField.Value;
-L_char = app.ChordLengthEditField.Value;
-T0 = (p0 ./ (rho0 .* R));
-Re0 = determineRe(velFS, L_char, rho0, T0);
-app.ReynoldsNumberEditField.Value = Re0;
-M0 = velFS / sqrt(gamma * R * T0);
-app.MachNoEditField.Value = M0;
-
 % solver parameters
-CFL = app.CFLEditField.Value;                 % CFL number for stability
-holdCFL = 0;                                  % initialise variable
+%CFL = app.CFLEditField.Value;                 % CFL number for stability
 tEnd = app.EndTimesEditField.Value;           % final time
 t = 0;                                          % initialise variable
 visc_alpha = app.ArtificialViscEditField.Value;  % artificial viscosity coeff (set >0 to add stabilization)
@@ -101,6 +101,7 @@ boundaryTypes = app.boundaryTypes;           % 4x1 struct of bcs for each wall
 boundaryVelocities = app.boundaryVelocities;
 
 residuals = []; % initialise variable
+times = []; % initialise variable
 
 % diagnostics / plotting
 % figure('units','normalized','position',[0.1 0.1 0.6 0.6]);
@@ -118,20 +119,22 @@ while t < tEnd
     Smax = max(max(sqrt(u.^2 + v.^2) + c));
 
     % set CFL -> timestep from CFL
-    [CFL, holdCFL] = CFL_Controller(CFL, holdCFL, residuals, iteration-1);
+    % CFL = CFL_Controller(CFL, iteration-1);
+    CFL = app.CFLEditField.Value;                 % CFL number for stability
     app.CurrentCFLEditField.Value = CFL;
     dt = CFL * minGridSpacing / Smax;
     if t + dt > tEnd, dt = tEnd - t; end
 
     % RK2 (Heun): stage 1 (predictor)
     RKstage = 1;
-    [RHSout, ~, ~] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
+    [RHSout, ~, ~] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
     U1 = Ucon + dt * RHSout;
 
     % stage 2 
     RKstage = 2;
-    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, R, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
+    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
     residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
+    times = [times t]; %#ok - times vector is relatively small memory wise
     app.C_DEditField.Value = iterationCoefficients(1);
 
     U2 = 0.5 * (Ucon + U1 + dt * RHSoutS2);
@@ -145,7 +148,7 @@ while t < tEnd
     if mod(iteration,plotEvery)==0 || t>=tEnd
         varToDisplay = app.DisplayVarDropDown.Value;
         flow_visualiser(app, varToDisplay);
-        plotResiduals(app.ResidualsPlot, iteration, residuals);
+        plotResiduals(app.ResidualsPlot, times, residuals);
     end
 
     % perform end of loop checks
@@ -173,7 +176,7 @@ end
 % --------------------
 % RHS function (finite-volume / fluxes)
 % --------------------
-function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt)
+function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt)
     % Ucon: Ny x Nx x 4 array
     % returns dU/dt of same shape
 
@@ -188,17 +191,19 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, R, dx, dy, ga
     Uext_con = prim2cons(Uext, gamma); % get conservative vars for padded arrays
 
     % compute Rusanov flux, x-direction (faces perpendicular to x)
-    [F, UL_x, UR_x] = rusanov_flux(Uext_con, 'x', gamma);
+    F = HLL_flux(Uext_con, 'x', gamma);
 
     % compute Rusanov flux, y-direction (faces perpendicular to y)
-    [G, UL_y, UR_y] = rusanov_flux(Uext_con, 'y', gamma);
+    G = HLL_flux(Uext_con, 'y', gamma);
 
     % compute viscosity
-    [mu_du_dx, mu_dv_dy] = diffusionTerm(UL_x, UR_x, UL_y, UR_y, dx, dy, R);
+    % [mu_du_dx, mu_dv_dy] = diffusionTerm(UL_x, UR_x, UL_y, UR_y, dx, dy, R);
+    % enforce viscosity for Re = 1e-4
+    mu = 0.0084035;
 
     % fluxes including diffusion/viscosity
-    F = F - mu_du_dx;
-    G = G - mu_dv_dy;
+    F = F - mu;
+    G = G - mu;
 
     % Apply IBM boundary conditions
     S = applyGeometryBCs(Ucon, geoObj, gamma, dt);

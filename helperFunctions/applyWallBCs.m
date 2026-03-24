@@ -41,66 +41,64 @@ end
             case 'wall'
                 [rho_e, u_e, v_e, p_e] = wallBC(rho_e, u_e, v_e, p_e, domainWall);
             case 'velocity inlet'
-                [rho_e, u_e, v_e, p_e] = velocityInletBC(rho_e, u_e, v_e, p_e, domainWall, velocities); % , freestreamConditions
+                [rho_e, u_e, v_e, p_e] = velocityInletBC(rho_e, u_e, v_e, p_e, domainWall, velocities, freestreamConditions); % , freestreamConditions
             case 'pressure outlet'
                 [rho_e, u_e, v_e, p_e] = pressureOutBC(rho_e, u_e, v_e, p_e, domainWall, freestreamConditions);
             otherwise % outflow is default
-                [rho_e, u_e, v_e, p_e] = outflowBC(rho_e, u_e, v_e, p_e, domainWall);
+                [rho_e, u_e, v_e, p_e] = outflowBC(rho_e, u_e, v_e, p_e, domainWall, freestreamConditions);
         end
     end
-
     Uext = cat(3, rho_e, u_e, v_e, p_e);
 end
 
-% ------------- Outflow BC -------------
-function [rho_e, u_e, v_e, p_e] = outflowBC(rho_e, u_e, v_e, p_e, domainWall)
+% ------------- Outflow/Farfield BC -------------
+function [rho_e, u_e, v_e, p_e] = outflowBC(rho_e, u_e, v_e, p_e, domainWall, freestreamConditions)
     % outflow (copy)
     switch domainWall
         case 'left'
-            rho_e(:,1)   = rho_e(:,2);
-            p_e(:,1)   = p_e(:,2);
-            u_e(:,1)   = u_e(:,2);
-            v_e(:,1)   = v_e(:,2);
-
+            rho_e(:,1)   = freestreamConditions(1);
+            p_e(:,1)   = freestreamConditions(4);
+            u_e(:,1)   = freestreamConditions(2);
+            v_e(:,1)   = freestreamConditions(3);
         case 'right'
-            rho_e(:,end) = rho_e(:,end-1);
-            p_e(:,end) = p_e(:,end-1);
-            u_e(:,end) = u_e(:,end-1);
-            v_e(:,end) = v_e(:,end-1);
+            rho_e(:,end) = freestreamConditions(1);
+            p_e(:,end) = freestreamConditions(4);
+            u_e(:,end) = freestreamConditions(2);
+            v_e(:,end) = freestreamConditions(3);
         case 'top'
-            rho_e(1,:)   = rho_e(2,:);
-            p_e(1,:)   = p_e(2,:);
-            u_e(1,:)   = u_e(2,:);
-            v_e(1,:)   = v_e(2,:);
+            rho_e(1,:)   = freestreamConditions(1);
+            p_e(1,:)   = freestreamConditions(4);
+            u_e(1,:)   = freestreamConditions(2);
+            v_e(1,:)   = freestreamConditions(3);
         case 'bottom'
-            rho_e(end,:) = rho_e(end-1,:);
-            p_e(end,:) = p_e(end-1,:);
-            u_e(end,:) = u_e(end-1,:);
-            v_e(end,:) = v_e(end-1,:);
+            rho_e(end,:) = freestreamConditions(1);
+            p_e(end,:) = freestreamConditions(4);
+            u_e(end,:) = freestreamConditions(2);
+            v_e(end,:) = freestreamConditions(3);
     end
 end
 
 % ------------- Velocity Inlet BC -------------
-function [rho_e, u_e, v_e, p_e] = velocityInletBC(rho_e, u_e, v_e, p_e, domainWall, velocities) % , freestreamConditions
+function [rho_e, u_e, v_e, p_e] = velocityInletBC(rho_e, u_e, v_e, p_e, domainWall, velocities, freestreamConditions) % , freestreamConditions
     % Dirichlet condition - set velocities, use FS density, allow rest to float
     switch domainWall
         case 'left' 
-            rho_e(:,1) = rho_e(:,2); % freestreamConditions(1);
+            rho_e(:,1) = freestreamConditions(1); % rho_e(:,2);
             p_e(:,1)   = p_e(:,2);
             u_e(:,1)   = velocities(4);
             v_e(:,1)   = 0; % v_e(:,2);
         case 'right'
-            rho_e(:,end) = rho_e(:,end-1); % freestreamConditions(1);
+            rho_e(:,end) = freestreamConditions(1); % rho_e(:,end-1);
             p_e(:,end) = p_e(:,end-1);
             u_e(:,end) = -velocities(2);
             v_e(:,end) = 0; % v_e(:,end-1);
         case 'top'
-            rho_e(1,:)   = rho_e(2,:); % freestreamConditions(1);
+            rho_e(1,:)   = freestreamConditions(1); % rho_e(2,:);
             p_e(1,:)   = p_e(2,:);
             u_e(1,:)   = 0; % u_e(2,:);
             v_e(1,:)   = -velocities(1);
         case 'bottom'
-            rho_e(end,:) = rho_e(end-1,:); % freestreamConditions(1);
+            rho_e(end,:) = freestreamConditions(1); % rho_e(end-1,:);
             p_e(end,:) = p_e(end-1,:);
             u_e(end,:) = 0; % u_e(end-1,:);
             v_e(end,:) = velocities(3);

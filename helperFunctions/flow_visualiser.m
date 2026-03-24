@@ -73,5 +73,19 @@ end
     colourbar = colorbar(target);
     colourbar.Label.String = colourbarLabel;
     app.SimulationTimeField.Value = t;
+
+    if app.plotCD
+        title(app.InterpolatedFieldVisualiser, "C_D vs Iteration")
+        xlabel(app.InterpolatedFieldVisualiser, "Iteration")
+        ylabel(app.InterpolatedFieldVisualiser, "C_D")
+        plot(app.InterpolatedFieldVisualiser, app.simData.coefficients(:,1))
+    elseif app.plotCL
+        title(app.InterpolatedFieldVisualiser, "C_L vs Iteration")
+        xlabel(app.InterpolatedFieldVisualiser, "Iteration")
+        ylabel(app.InterpolatedFieldVisualiser, "C_L")
+        plot(app.InterpolatedFieldVisualiser, app.simData.coefficients(:,2))
+    end
+
+    target.PlotBoxAspectRatio = [x(end) y(end) 1];
     drawnow;
 end

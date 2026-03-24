@@ -5,6 +5,12 @@ function boundBoxFaces = boundBox(geometryData)
 
 domainDims = size(geometryData.geometryBorder);
 
+if isempty(xBoundCells) || isempty(yBoundCells)
+    boundBox(domainDims(1)*0.25:domainDims(1)*0.75, domainDims(2)*0.25:domainDims(2)*0.75) = true; % set a bound box containing middle of domain
+    boundBoxFaces = bwperim(boundBox); % get perimeter of control volume
+    return
+end
+
 xmin = min(xBoundCells);
 xmax = max(xBoundCells);
 ymin = min(yBoundCells);

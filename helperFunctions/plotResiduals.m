@@ -4,7 +4,7 @@ semilogy(targetAxes, time, normalize(residuals, "range")); % for non normalised 
 title(targetAxes, "Residuals")
 xlabel(targetAxes, "Physical Time (s)")
 ylabel(targetAxes, "Normalised Residual")
-legend(targetAxes, "Continuity", "X-Momentum", "Y-Momentum", "Energy")
+legend(targetAxes, "Continuity", "X-Momentum", "Y-Momentum", "Energy", "Location", "southwest")
 grid(targetAxes, "on")
 
 end

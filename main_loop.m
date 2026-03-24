@@ -41,18 +41,29 @@ y = linspace(dy/2, Ly-dy/2, Ny);
 minGridSpacing = min(dx,dy);
 
 % Import Geometry
-NACA4Code = app.NACA4DigitCodeEditField.Value;
-chordLength = app.ChordLengthEditField.Value;
-thickPcent = str2double([NACA4Code(3:4)])/100;
-refA = thickPcent * chordLength;
-[xGeometry, yGeometry] = aerofoil_generation(NACA4Code, chordLength,...
-    app.AngleofAttackEditField.Value, app.NumberofPointsEditField.Value);
-xGeometry = xGeometry + Lx * app.CoordinatesofLeadingEdgeX.Value/100;
-yGeometry = yGeometry + Ly * app.CoordinatesofLeadingEdgeY.Value/100; % adjust position of leading edge
-geometryObj = geometry(X, Y, xGeometry, yGeometry);
-if ~any(geometryObj.withinGeometry,"all")
-    uialert(app.UIFigure, "Geometry may be too large relative to grid size",'Warning: ','Icon','Warning')
+numGeoPoints = app.NumberofPointsEditField.Value;
+geoAngle = app.AngleEditField.Value;
+geoLength = app.LengthEditField.Value;
+geoCentre = [Lx * app.CoordinatesofLeadingEdgeX.Value/100, Ly * app.CoordinatesofLeadingEdgeY.Value/100];
+switch app.SwitchType.Value
+    case "Aerofoil"
+        NACA4Code = app.NACA4DigitCodeEditField.Value;
+        thickPcent = str2double([NACA4Code(3:4)])/100;
+        refA = thickPcent * geoLength;
+        [xGeometry, yGeometry] = aerofoil_generation(NACA4Code, geoLength, geoAngle, numGeoPoints);
+        xGeometry = xGeometry + geoCentre(1);
+        yGeometry = yGeometry + geoCentre(2); % adjust position of leading edge
+    case "Shape"
+        geoShape = app.ShapeDropDown.Value;
+        [xGeometry, yGeometry] = createGeometry(geoShape, geoCentre, geoLength, geoAngle, numGeoPoints);
+        xGeometry = xGeometry';
+        yGeometry = yGeometry';
+        refA = geoLength*2;
 end
+geometryObj = geometry(X, Y, xGeometry, yGeometry);
+% if ~any(geometryObj.withinGeometry,"all")
+%     uialert(app.UIFigure, "Geometry may be too large relative to grid size",'Warning: ','Icon','Warning')
+% end
 geometryObj = geometryObj.geoInterpret;
 
 % Physical parameters
@@ -69,7 +80,7 @@ freestreamConditions = [rho0, U0, V0, p0];
 
 % determine initial Reynolds and Mach Numbers (WARNING: may be incorrect if inlet x velocity not set correctly or crossflow)
 velFS = app.InletVelocityEditField.Value;
-L_char = app.ChordLengthEditField.Value;
+L_char = 2 * geoLength;
 T0 = (p0 ./ (rho0 .* R));
 Re0 = rho0 * U0 * L_char / mu;
 app.ReynoldsNumberEditField.Value = Re0;
@@ -102,6 +113,7 @@ boundaryVelocities = app.boundaryVelocities;
 
 residuals = []; % initialise variable
 times = []; % initialise variable
+coefficientHistory = []; % initialise variable
 
 % diagnostics / plotting
 % figure('units','normalized','position',[0.1 0.1 0.6 0.6]);
@@ -122,6 +134,7 @@ while t < tEnd
     % CFL = CFL_Controller(CFL, iteration-1);
     CFL = app.CFLEditField.Value;                 % CFL number for stability
     app.CurrentCFLEditField.Value = CFL;
+    tEnd = app.EndTimesEditField.Value;           % check final time input
     dt = CFL * minGridSpacing / Smax;
     if t + dt > tEnd, dt = tEnd - t; end
 
@@ -135,14 +148,17 @@ while t < tEnd
     [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
     residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
     times = [times t]; %#ok - times vector is relatively small memory wise
-    app.C_DEditField.Value = iterationCoefficients(1);
+    
+    coefficientHistory = [coefficientHistory; iterationCoefficients(1), iterationCoefficients(2)]; %#ok - coefficients vector is relatively small memory wise
+    app.C_DEditField.Value = mean(coefficientHistory(:,1));
+    app.C_LEditField.Value = mean(coefficientHistory(:,2));
 
     U2 = 0.5 * (Ucon + U1 + dt * RHSoutS2);
     Ucon = U2; % update Ucon with new values
     t = t + dt;
 
     Ufinal = cons2prim(Ucon, gamma);
-    app.simData = simDataStore(Ufinal, X, Y, gamma, R, t, geometryObj, residuals);
+    app.simData = simDataStore(Ufinal, X, Y, gamma, R, t, geometryObj, residuals, coefficientHistory);
 
     % update flow visualiser occasionally
     if mod(iteration,plotEvery)==0 || t>=tEnd
@@ -171,14 +187,42 @@ while t < tEnd
     end
     drawnow limitrate
 end
+
+% Export results
+savepath = pwd;
+if savepath == 0
+    return
+end
+timeAndDateChar = char(datetime('now','Format','yyyy-MM-dd_HH-mm-ss'));
+numberOfPlots = length(app.DisplayVarDropDown.Items);
+
+% Flow Field Property Plots
+for nPlot = 1:numberOfPlots
+    % loop through output variables
+    currentDisplayVar = app.DisplayVarDropDown.Items(nPlot);
+    flow_visualiser(app, currentDisplayVar);
+    % create filename and export
+    currentFileNameAndPath = [savepath '\' char(app.DisplayVarDropDown.Items(nPlot)) '_' timeAndDateChar '.png'];
+    exportgraphics(app.FlowVisualiser, currentFileNameAndPath);
+end
+
+% Residuals Plot
+currentFileNameAndPath = [savepath '\Residuals_' timeAndDateChar '.png'];
+exportgraphics(app.ResidualsPlot, currentFileNameAndPath); % TODO may want to allow choice of colourmap from GUI
+
+% Simulation Data
+currentFileNameAndPath = [savepath '\SimulationData_' timeAndDateChar];
+simdataVariable = app.simData;
+save(currentFileNameAndPath, 'simdataVariable');
+
+currentFileNameAndPath = [savepath '\coefficientHistory_' timeAndDateChar];
+save(currentFileNameAndPath, 'coefficientHistory');
 end
 
 % --------------------
 % RHS function (finite-volume / fluxes)
 % --------------------
 function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt)
-    % Ucon: Ny x Nx x 4 array
-    % returns dU/dt of same shape
 
     % reconstruct states at faces using MUSCL (linear reconstruction) with minmod limiter
     % For simplicity handle interior with one-sided for boundaries depending on 'boundary'
@@ -188,38 +232,40 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma
 
     % extend arrays for BCs
     Uext = applyWallBCs(U, boundary, velocities, freestreamConditions); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
-    Uext_con = prim2cons(Uext, gamma); % get conservative vars for padded arrays
 
-    % compute Rusanov flux, x-direction (faces perpendicular to x)
-    F = HLL_flux(Uext_con, 'x', gamma);
+    % Enforce adiabatic walls for geometry boundaries
+    % Uext = applyGeometryAdiabaticBCs(Uext, geoObj, gamma, dt, dx, dy);
+    
+    % get conservative vars for padded arrays
+    Uext_con = prim2cons(Uext, gamma); 
 
-    % compute Rusanov flux, y-direction (faces perpendicular to y)
-    G = HLL_flux(Uext_con, 'y', gamma);
-
-    % compute viscosity
-    % [mu_du_dx, mu_dv_dy] = diffusionTerm(UL_x, UR_x, UL_y, UR_y, dx, dy, R);
-    % enforce viscosity for Re = 1e-4
+    % Enforce viscosity to enforce desired Reynolds number
     mu = 0.0084035;
 
-    % fluxes including diffusion/viscosity
-    F = F - mu;
-    G = G - mu;
+    % compute HLL flux, x-direction (faces perpendicular to x)
+    F = HLL_flux(Uext_con, 'x', gamma, mu, dx);
 
-    % Apply IBM boundary conditions
-    S = applyGeometryBCs(Ucon, geoObj, gamma, dt);
+    % compute HLL flux, y-direction (faces perpendicular to y)
+    G = HLL_flux(Uext_con, 'y', gamma, mu, dy);
+
+    % assemble RHS via divergence of fluxes
+    RHS = flow_divergence(F, G, dx, dy);
+
+    % Determine and apply IBM source terms
+    S = applyGeometryBCs(RHS, Ucon, geoObj, gamma, dt);
+    RHSout = RHS + S;
 
     % Force Coeffs
     if stage == 2
         contVolFaces = boundBox(geoObj);
         forces = calculateForces(contVolFaces, F, G, dx, dy);
+        forces(2) = -sum(S(:,:,2),"all")*(dx*dy); % TODO - fix alternate method
         dragCoeff = 2 * forces(1) / (rho0 * velFS ^ 2 * refA);
-        forceCoefficients = dragCoeff; % TODO - add other coeffs
+        dragCoeffAlt = 2 * forces(2) / (rho0 * velFS ^ 2 * refA);
+        forceCoefficients = [dragCoeff dragCoeffAlt] ; % TODO - add lift coeff
     else 
         forceCoefficients = [];
     end
-
-    % assemble RHS via divergence of fluxes including IBM source terms
-    RHSout = flow_divergence(F, G, dx, dy) + S;
 
     % residuals
     for idx = 1:4

@@ -5,7 +5,7 @@
 %         dir - x or y direction of flux computation
 %         gamma - ratio of specific heats
 % L & R denote the left and right faces of the cells relative to direction of flux computation (dir)
-function F = HLL_flux(Uext_con, dir, gamma)
+function F = HLL_flux(Uext_con, dir, gamma, mu, spacing)
 
 % define minmod limiter anonymous function
 minmod = @(a,b) 0.5 * (sign(a) + sign(b)) .* min(abs(a), abs(b));
@@ -26,7 +26,6 @@ minmod = @(a,b) 0.5 * (sign(a) + sign(b)) .* min(abs(a), abs(b));
 
             ULcon = ULcon + 0.5 .* dU_i(:,1:end-1,:);
             URcon = URcon - 0.5 .* dU_i(:,2:end,:);
-
         case 'y' % create 'left' and 'right' side of cell face arrays by removing the outer rows (take y-direction aligned left -> right)
             U_im_con = Uext_con(1:end-2,:,:); % U_i-1
             U_i_con = Uext_con(2:end-1,:,:);   % U_i
@@ -45,13 +44,23 @@ minmod = @(a,b) 0.5 * (sign(a) + sign(b)) .* min(abs(a), abs(b));
 
     UL = cons2prim(ULcon, gamma);
     UR = cons2prim(URcon, gamma);
+
+    switch dir
+        case 'x'
+            Fvisc = mu * (UR(:,:,2) - UL(:,:,2))/spacing; % mu * du/dx
+        case 'y'
+            Fvisc = mu * (UR(:,:,3) - UL(:,:,3))/spacing; % mu * dv/dy
+    end
     
     % create L & R structs containing the cell values either side of the face for the given direction
     ULstruct = struct('rho',ULcon(:,:,1), 'rho_u',ULcon(:,:,2), 'rho_v',ULcon(:,:,3), 'rho_E',ULcon(:,:,4), 'p',UL(:,:,4));
     URStruct = struct('rho',URcon(:,:,1), 'rho_u',URcon(:,:,2), 'rho_v',URcon(:,:,3), 'rho_E',URcon(:,:,4), 'p',UR(:,:,4));
 
     % Calculate fluxes
-    F = cellFaceFluxes(ULstruct, URStruct, UL, UR, gamma, dir);
+    Finv = cellFaceFluxes(ULstruct, URStruct, UL, UR, gamma, dir);
+
+    F = Finv - Fvisc;
+
 end
 
 % --------------------
@@ -80,7 +89,7 @@ switch dir
         velocityL = UL(:,:,3);
         velocityR = UR(:,:,3);
         % pressure term required in third element of flux array only for y dir
-        pyL = UR(:,:,4);    
+        pyL = UL(:,:,4);    
         pyR = UR(:,:,4);
 end
 

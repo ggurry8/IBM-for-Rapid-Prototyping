@@ -13,7 +13,7 @@ end
 
 U = cons2prim(Ucon, gamma);
 [rho, u, v] = deal(U(:,:,1), U(:,:,2), U(:,:,3));
-forcingMask = geometryObj.geometryBorder; % + geometryObj.withinGeometry;
+forcingMask = geometryObj.volFractions; % + geometryObj.withinGeometry;
 
 desiredxVelocity = 0;
 desiredyVelocity = 0;

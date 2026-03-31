@@ -9,6 +9,7 @@ classdef geometry
         geometryBorder
         withinGeometry
         geoGradient
+        volFractions
     end
 
     methods
@@ -20,6 +21,7 @@ classdef geometry
             geoObj.geometryCells = inpolygon(XGrid, YGrid, xGeometry, yGeometry); % logical mask for cells which contain the geometry
             geoObj.geometryBorder = bwperim(geoObj.geometryCells); % find the cells which contain the geometry edge
             geoObj.withinGeometry = logical(geoObj.geometryCells - geoObj.geometryBorder); % find the cells entirely within the geometry edge
+            geoObj = volumeFractions(xGeometry, yGeometry, XGrid(1,:) ,YGrid(:,1), geoObj);
         end
 
         function geoObj = geoInterpret(geoObj)

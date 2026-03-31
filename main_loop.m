@@ -25,7 +25,6 @@
 % GRID:
 %   Lx,Ly - Domain physical size (x,y)
 %   Nx,Ny - Domain grid size (x,y)
-%   
 
 function main_loop(app)
 
@@ -188,35 +187,38 @@ while t < tEnd
     drawnow limitrate
 end
 
-% Export results
-savepath = pwd;
-if savepath == 0
-    return
+
+if t == tEnd % only export results if end time reached
+    % Export results
+    savepath = pwd;
+    if savepath == 0
+        return
+    end
+    timeAndDateChar = char(datetime('now','Format','yyyy-MM-dd_HH-mm-ss'));
+    numberOfPlots = length(app.DisplayVarDropDown.Items);
+
+    % Flow Field Property Plots
+    for nPlot = 1:numberOfPlots
+        % loop through output variables
+        currentDisplayVar = app.DisplayVarDropDown.Items(nPlot);
+        flow_visualiser(app, currentDisplayVar);
+        % create filename and export
+        currentFileNameAndPath = [savepath '\' char(app.DisplayVarDropDown.Items(nPlot)) '_' timeAndDateChar '.png'];
+        exportgraphics(app.FlowVisualiser, currentFileNameAndPath);
+    end
+    % Residuals Plot
+    currentFileNameAndPath = [savepath '\Residuals_' timeAndDateChar '.png'];
+    exportgraphics(app.ResidualsPlot, currentFileNameAndPath); % TODO may want to allow choice of colourmap from GUI
+
+    % Simulation Data
+    currentFileNameAndPath = [savepath '\SimulationData_' timeAndDateChar];
+    simdataVariable = app.simData;
+    save(currentFileNameAndPath, 'simdataVariable');
+
+    currentFileNameAndPath = [savepath '\coefficientHistory_' timeAndDateChar];
+    save(currentFileNameAndPath, 'coefficientHistory');
 end
-timeAndDateChar = char(datetime('now','Format','yyyy-MM-dd_HH-mm-ss'));
-numberOfPlots = length(app.DisplayVarDropDown.Items);
 
-% Flow Field Property Plots
-for nPlot = 1:numberOfPlots
-    % loop through output variables
-    currentDisplayVar = app.DisplayVarDropDown.Items(nPlot);
-    flow_visualiser(app, currentDisplayVar);
-    % create filename and export
-    currentFileNameAndPath = [savepath '\' char(app.DisplayVarDropDown.Items(nPlot)) '_' timeAndDateChar '.png'];
-    exportgraphics(app.FlowVisualiser, currentFileNameAndPath);
-end
-
-% Residuals Plot
-currentFileNameAndPath = [savepath '\Residuals_' timeAndDateChar '.png'];
-exportgraphics(app.ResidualsPlot, currentFileNameAndPath); % TODO may want to allow choice of colourmap from GUI
-
-% Simulation Data
-currentFileNameAndPath = [savepath '\SimulationData_' timeAndDateChar];
-simdataVariable = app.simData;
-save(currentFileNameAndPath, 'simdataVariable');
-
-currentFileNameAndPath = [savepath '\coefficientHistory_' timeAndDateChar];
-save(currentFileNameAndPath, 'coefficientHistory');
 end
 
 % --------------------

@@ -1,6 +1,6 @@
 % plotting function for NACA 4 digit aerofoils
 % see http://airfoiltools.com/airfoil/naca4digit
-function [xCoords, yCoords] = aerofoil_generation(MPXX, chord, aoaDegrees, nPoints)
+function [xCoords, yCoords, centroid] = aerofoil_generation(MPXX, chord, aoaDegrees, nPoints)
     arguments
         MPXX (1,4) char
         chord (1,1) double = 1
@@ -8,10 +8,12 @@ function [xCoords, yCoords] = aerofoil_generation(MPXX, chord, aoaDegrees, nPoin
         nPoints (1,1) double = 100
     end
 
+    nPointsUL = nPoints/2; % number of points for each upper and lower surface
+
     % ------------ aerofoil geometry -----------------
     % a chord of 1 is assumed initally, and actual chord is applied later 
-    B = linspace(0,pi,nPoints); % range of points in cosine space
-    xLinear = linspace(0,1,nPoints); % x coordinates for linear spacing - necessary for determining point of max camber in the cosine data
+    B = linspace(0,pi,nPointsUL); % range of points in cosine space
+    xLinear = linspace(0,1,nPointsUL); % x coordinates for linear spacing - necessary for determining point of max camber in the cosine data
     xCosine = (1-cos(B))/2; % x coordinates for cosine spacing
     aoaRads = aoaDegrees * pi/180; % convert to radians
     M = str2double(MPXX(1))/100; 
@@ -19,11 +21,11 @@ function [xCoords, yCoords] = aerofoil_generation(MPXX, chord, aoaDegrees, nPoin
     T = str2double(MPXX(3:4))/100 * chord;
     
     % ----------- calculate camber line ------------------
-    yCamber = zeros(1,nPoints);
-    yCamberGradient = zeros(1,nPoints);
+    yCamber = zeros(1,nPointsUL);
+    yCamberGradient = zeros(1,nPointsUL);
     if M ~= 0 && P ~= 0
         idx = 1;
-        idxMaxCamber = ceil(nPoints * P); % x index of maximum camber
+        idxMaxCamber = ceil(nPointsUL * P); % x index of maximum camber
         xLinearMaxCamber = xLinear(idxMaxCamber);
         [~,xCosineMaxCamberidx] = min(abs(xCosine-xLinearMaxCamber));
         while idx <= xCosineMaxCamberidx
@@ -31,7 +33,7 @@ function [xCoords, yCoords] = aerofoil_generation(MPXX, chord, aoaDegrees, nPoin
             yCamberGradient(idx) = (2*M)/P^2 * (P - xCosine(idx));
             idx = idx + 1;
         end
-        for idx2 = idx:nPoints
+        for idx2 = idx:nPointsUL
             yCamber(idx2) = M/(1-P)^2 * (1 - 2*P + 2*P * xCosine(idx2) - xCosine(idx2) ^ 2);
             yCamberGradient(idx) = (2*M)/(1-P)^2 * (P - xCosine(idx));
         end
@@ -41,12 +43,12 @@ function [xCoords, yCoords] = aerofoil_generation(MPXX, chord, aoaDegrees, nPoin
 
     % --------------- coordinate creation ------------------------
     
-    thickness = zeros(1,nPoints);
-    yupper = zeros(1,nPoints); % y coordinates of upper surface
-    ylower = zeros(1,nPoints); % y coordinates of lower surface
-    xupper = zeros(1,nPoints); % y coordinates of upper surface
-    xlower = zeros(1,nPoints); % y coordinates of lower surface
-    for idx = 1:nPoints
+    thickness = zeros(1,nPointsUL);
+    yupper = zeros(1,nPointsUL); % y coordinates of upper surface
+    ylower = zeros(1,nPointsUL); % y coordinates of lower surface
+    xupper = zeros(1,nPointsUL); % y coordinates of upper surface
+    xlower = zeros(1,nPointsUL); % y coordinates of lower surface
+    for idx = 1:nPointsUL
         thickness(idx) = T/0.2 * (0.2969 * xCosine(idx) ^ 0.5 + -0.126 * xCosine(idx) + -0.3516 * xCosine(idx) ^ 2 ...
             + 0.2843 * xCosine(idx) ^ 3 + -0.1036 * xCosine(idx) ^ 4); % calculate aerofoil thickness at a given x coordinate
         theta = atan(yCamberGradient(idx));

@@ -27,44 +27,10 @@
 %   Nx,Ny - Domain grid size (x,y)
 
 function main_loop(app)
-
+profile on
 % --------------------
 % Problem / grid setup
 % --------------------
-Lx = app.XDomainEditField.Value; Ly = app.YDomainEditField.Value;         % domain size
-Nx = app.XGridEditField.Value; Ny = app.YGridEditField.Value;         % grid cells in x/y
-dx = Lx / Nx; dy = Ly / Ny; % grid spacing (x,y) 
-x = linspace(dx/2, Lx-dx/2, Nx);
-y = linspace(dy/2, Ly-dy/2, Ny);
-[X,Y] = meshgrid(x,y);
-minGridSpacing = min(dx,dy);
-
-% Import Geometry
-numGeoPoints = app.NumberofPointsEditField.Value;
-geoAngle = app.AngleEditField.Value;
-geoLength = app.LengthEditField.Value;
-geoCentre = [Lx * app.CoordinatesofLeadingEdgeX.Value/100, Ly * app.CoordinatesofLeadingEdgeY.Value/100];
-switch app.SwitchType.Value
-    case "Aerofoil"
-        NACA4Code = app.NACA4DigitCodeEditField.Value;
-        thickPcent = str2double([NACA4Code(3:4)])/100;
-        refA = thickPcent * geoLength;
-        [xGeometry, yGeometry] = aerofoil_generation(NACA4Code, geoLength, geoAngle, numGeoPoints);
-        xGeometry = xGeometry + geoCentre(1);
-        yGeometry = yGeometry + geoCentre(2); % adjust position of leading edge
-    case "Shape"
-        geoShape = app.ShapeDropDown.Value;
-        [xGeometry, yGeometry] = createGeometry(geoShape, geoCentre, geoLength, geoAngle, numGeoPoints);
-        xGeometry = xGeometry';
-        yGeometry = yGeometry';
-        refA = geoLength*2;
-end
-geometryObj = geometry(X, Y, xGeometry, yGeometry);
-% if ~any(geometryObj.withinGeometry,"all")
-%     uialert(app.UIFigure, "Geometry may be too large relative to grid size",'Warning: ','Icon','Warning')
-% end
-geometryObj = geometryObj.geoInterpret;
-
 % Physical parameters
 gamma = 1.4;            % ratio of specific heats
 R = 287;                % gas constant (not used explicitly if using p=(gamma-1)*rho*e)
@@ -77,6 +43,69 @@ V0 = 0.0;                     % background velocity in y
 p0 = 101325;                  % background pressure in Pa
 freestreamConditions = [rho0, U0, V0, p0];
 
+if app.loadFromFile % if loading from save file use initial conditions from save
+    % load primitive variables
+    rho = app.simData.density;
+    u = app.simData.xVelocity;
+    v = app.simData.yVelocity;
+    p = app.simData.pressure;
+    physicalTime = app.simData.time;                                          % initialise variable
+
+    % load domain information
+    Lx = max(app.simData.geometryData.XGrid,[],"all"); Ly = max(app.simData.geometryData.YGrid,[],"all");         % domain size
+    [Ny, Nx] = size(app.simData.geometryData.XGrid);         % grid cells in x/y
+    dx = Lx / Nx; dy = Ly / Ny; % grid spacing (x,y)
+    [X,Y] = deal(app.simData.geometryData.XGrid,app.simData.geometryData.YGrid);
+    minGridSpacing = min(dx,dy);
+
+    % load geometry data
+    geometryObj = app.simData.geometryData;
+    [geoLength, refA] = deal(geometryObj.loadUnloadInfo(1), geometryObj.loadUnloadInfo(2));
+else
+    % initialise primitive variables
+    rho = rho0;
+    u = U0 * ones(size(rho));
+    v = V0 * ones(size(rho));
+    p = p0 * ones(size(rho));
+    physicalTime = 0;                                          % initialise variable
+
+    % initialise domain variables
+    Lx = app.XDomainEditField.Value; Ly = app.YDomainEditField.Value;         % domain size
+    Nx = app.XGridEditField.Value; Ny = app.YGridEditField.Value;         % grid cells in x/y
+    dx = Lx / Nx; dy = Ly / Ny; % grid spacing (x,y)
+    x = linspace(dx/2, Lx-dx/2, Nx);
+    y = linspace(dy/2, Ly-dy/2, Ny);
+    [X,Y] = meshgrid(x,y);
+    minGridSpacing = min(dx,dy);
+
+    % define geometry
+    numGeoPoints = app.NumberofPointsEditField.Value;
+    geoAngle = app.AngleEditField.Value;
+    geoLength = app.LengthEditField.Value;
+    geoCentre = [Lx * app.CoordinatesofLeadingEdgeX.Value/100, Ly * app.CoordinatesofLeadingEdgeY.Value/100];
+    switch app.SwitchType.Value
+        case "Aerofoil"
+            NACA4Code = app.NACA4DigitCodeEditField.Value;
+            thickPcent = str2double([NACA4Code(3:4)])/100;
+            refA = thickPcent * geoLength;
+            [xGeometry, yGeometry] = aerofoil_generation(NACA4Code, geoLength, geoAngle, numGeoPoints);
+            xGeometry = xGeometry + geoCentre(1);
+            yGeometry = yGeometry + geoCentre(2); % adjust position of leading edge
+        case "Shape"
+            geoShape = app.ShapeDropDown.Value;
+            [xGeometry, yGeometry] = createGeometry(geoShape, geoCentre, geoLength, geoAngle, numGeoPoints);
+            xGeometry = xGeometry';
+            yGeometry = yGeometry';
+            refA = geoLength*2;
+    end
+    app.NewSimulationButton.Text = "Interpreting Geometry...";
+    pause(0.1) % allow time for updating GUI
+    geoInterpMethod = app.GeoInterpDD;
+    geometryObj = geometry(X, Y, xGeometry, yGeometry);
+    geometryObj = geometryObj.geoInterpret(geoInterpMethod);
+    geometryObj.loadUnloadInfo = [geoLength; refA];
+end
+
 % determine initial Reynolds and Mach Numbers (WARNING: may be incorrect if inlet x velocity not set correctly or crossflow)
 velFS = app.InletVelocityEditField.Value;
 L_char = 2 * geoLength;
@@ -86,27 +115,20 @@ app.ReynoldsNumberEditField.Value = Re0;
 M0 = velFS / sqrt(gamma * R * T0);
 app.MachNoEditField.Value = M0;
 
-% primitive variables
-rho = rho0;
-U = U0 * ones(size(rho));
-V = V0 * ones(size(rho));
-p = p0 * ones(size(rho));
-
-% Conservative variables (Ucon = [rho; rho*u; rho*v; rho*E])
-E = p./((gamma-1)) ./ rho + 0.5*(U.^2 + V.^2); % specific total energy
+% Initialise conservative variables (Ucon = [rho; rho*u; rho*v; rho*E])
+E = p./((gamma-1)) ./ rho + 0.5*(u.^2 + v.^2); % specific total energy
 rhoe = rho .* E;
 Ucon = zeros(Ny, Nx, 4); % initialise variable
 Ucon(:,:,1) = rho;       % conservative variable flow properties
-Ucon(:,:,2) = rho .* U;
-Ucon(:,:,3) = rho .* V;
+Ucon(:,:,2) = rho .* u;
+Ucon(:,:,3) = rho .* v;
 Ucon(:,:,4) = rhoe;
 
 % solver parameters
-%CFL = app.CFLEditField.Value;                 % CFL number for stability
 tEnd = app.EndTimesEditField.Value;           % final time
-t = 0;                                          % initialise variable
 visc_alpha = app.ArtificialViscEditField.Value;  % artificial viscosity coeff (set >0 to add stabilization)
 
+% external boundaries
 boundaryTypes = app.boundaryTypes;           % 4x1 struct of bcs for each wall
 boundaryVelocities = app.boundaryVelocities;
 
@@ -114,65 +136,86 @@ residuals = []; % initialise variable
 times = []; % initialise variable
 coefficientHistory = []; % initialise variable
 
-% diagnostics / plotting
+% diagnostics / plotting / autosave
 % figure('units','normalized','position',[0.1 0.1 0.6 0.6]);
+autosaveFrequency = app.AutosaveFrequencyField.Value;
+autosaveFreqCurrent = autosaveFrequency;
 plotEvery = app.UpdateFreqEditField.Value;
 iteration = 1;
+
+app.NewSimulationButton.Text = "Simulation Running...";
+app.TerminateSimulationButton.Enable = "on";          
+app.PauseSimulationButton.Enable = "on";
+pause(0.1) % allow time for updating GUI
 
 % ---------------------
 % Main time loop
 % ---------------------
-while t < tEnd
+while physicalTime < tEnd
+    drawnow limitrate % update GUI with iteration, time, etc
+
     % compute primitive variables & flux Jacobian max wave speed
     Uinitial = cons2prim(Ucon, gamma);
     [rho, u, v, p] = deal(Uinitial(:,:,1), Uinitial(:,:,2), Uinitial(:,:,3), Uinitial(:,:,4)); % assign the primitives to individual variables
     c = sqrt(max(gamma * p ./ rho, 1e-12));
     Smax = max(max(sqrt(u.^2 + v.^2) + c));
 
+    % CFL control parameters
+    iterationResiduals = []; % initialise variable
+    settlingTime = 0.3; % how long the initial transient lasts (seconds) - also used for starting the running average post transient
+    if max(iterationResiduals) < 0.1
+        if physicalTime > settlingTime && CFL < 0.29
+            app.CFLEditField.Value = 0.3;
+        elseif physicalTime > settlingTime && CFL < 0.39
+            app.CFLEditField.Value = 0.4;
+        end
+    elseif max(iterationResiduals) > 0.5 % residual spike
+        app.CFLEditField.Value = 0.2; % bring CFL down to "safe" value
+    end
     % set CFL -> timestep from CFL
-    % CFL = CFL_Controller(CFL, iteration-1);
-    CFL = app.CFLEditField.Value;                 % CFL number for stability
-    app.CurrentCFLEditField.Value = CFL;
+    CFL =  app.CFLEditField.Value;                % CFL number for stability
+
+    % Determine timestep size based on CFL
     tEnd = app.EndTimesEditField.Value;           % check final time input
-    dt = CFL * minGridSpacing / Smax;
-    if t + dt > tEnd, dt = tEnd - t; end
+    iterationTimestep = CFL * minGridSpacing / Smax;
+    if physicalTime + iterationTimestep > tEnd, iterationTimestep = tEnd - physicalTime; end
 
     % RK2 (Heun): stage 1 (predictor)
     RKstage = 1;
-    [RHSout, ~, ~] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
-    U1 = Ucon + dt * RHSout;
+    [RHSout, ~, ~] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
+    U1 = Ucon + iterationTimestep * RHSout;
 
     % stage 2 
     RKstage = 2;
-    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, dt);
+    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
     residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
-    times = [times t]; %#ok - times vector is relatively small memory wise
+    times = [times physicalTime]; %#ok - times vector is relatively small memory wise
     
     coefficientHistory = [coefficientHistory; iterationCoefficients(1), iterationCoefficients(2)]; %#ok - coefficients vector is relatively small memory wise
     app.C_DEditField.Value = mean(coefficientHistory(:,1));
     app.C_LEditField.Value = mean(coefficientHistory(:,2));
 
-    U2 = 0.5 * (Ucon + U1 + dt * RHSoutS2);
+    U2 = 0.5 * (Ucon + U1 + iterationTimestep * RHSoutS2);
     Ucon = U2; % update Ucon with new values
-    t = t + dt;
+    physicalTime = physicalTime + iterationTimestep;
 
     Ufinal = cons2prim(Ucon, gamma);
-    app.simData = simDataStore(Ufinal, X, Y, gamma, R, t, geometryObj, residuals, coefficientHistory);
+    app.simData = simDataStore(Ufinal, X, Y, gamma, R, physicalTime, geometryObj, residuals, coefficientHistory);
+
+    app.simData.fieldAvg = app.simData.fieldAvg + Ufinal;
+    if physicalTime > settlingTime % begin updating running avg after settling time reached
+        app.simData.fieldAvgPostTransient = app.simData.fieldAvgPostTransient + Ufinal;
+    end
 
     % update flow visualiser occasionally
-    if mod(iteration,plotEvery)==0 || t>=tEnd
+    if mod(iteration,plotEvery)==0 || physicalTime>=tEnd
         varToDisplay = app.DisplayVarDropDown.Value;
         flow_visualiser(app, varToDisplay);
         plotResiduals(app.ResidualsPlot, times, residuals);
     end
 
-    % perform end of loop checks
-    app.SimulationTimeField.Value = t;
-    iteration = iteration + 1;
-    app.IterationNumberField.Value = iteration;
     if app.TerminateSimProperty
         app.TerminateSimProperty = false; % reset property
-        % pass data out of app
         break
     elseif app.PauseSimulationButton.Value
         % pass sim data out of app
@@ -184,39 +227,27 @@ while t < tEnd
             pause(1)
         end
     end
-    drawnow limitrate
+
+    % perform end of loop checks
+    app.SimulationTimeField.Value = physicalTime;
+    iteration = iteration + 1;
+    app.IterationNumberField.Value = iteration;
+
+    if autosaveFrequency == 0
+        % do nothing
+    elseif autosaveFreqCurrent == 0 % only export results if 
+        exportResults(app)
+        autosaveFreqCurrent = autosaveFrequency;
+    else
+        autosaveFreqCurrent = autosaveFreqCurrent - 1;
+    end
 end
 
+p = profile('info');
+save mainprofiledata p
 
-if t == tEnd % only export results if end time reached
-    % Export results
-    savepath = pwd;
-    if savepath == 0
-        return
-    end
-    timeAndDateChar = char(datetime('now','Format','yyyy-MM-dd_HH-mm-ss'));
-    numberOfPlots = length(app.DisplayVarDropDown.Items);
-
-    % Flow Field Property Plots
-    for nPlot = 1:numberOfPlots
-        % loop through output variables
-        currentDisplayVar = app.DisplayVarDropDown.Items(nPlot);
-        flow_visualiser(app, currentDisplayVar);
-        % create filename and export
-        currentFileNameAndPath = [savepath '\' char(app.DisplayVarDropDown.Items(nPlot)) '_' timeAndDateChar '.png'];
-        exportgraphics(app.FlowVisualiser, currentFileNameAndPath);
-    end
-    % Residuals Plot
-    currentFileNameAndPath = [savepath '\Residuals_' timeAndDateChar '.png'];
-    exportgraphics(app.ResidualsPlot, currentFileNameAndPath); % TODO may want to allow choice of colourmap from GUI
-
-    % Simulation Data
-    currentFileNameAndPath = [savepath '\SimulationData_' timeAndDateChar];
-    simdataVariable = app.simData;
-    save(currentFileNameAndPath, 'simdataVariable');
-
-    currentFileNameAndPath = [savepath '\coefficientHistory_' timeAndDateChar];
-    save(currentFileNameAndPath, 'coefficientHistory');
+if physicalTime == tEnd % only export results if end time reached
+    exportResults(app)
 end
 
 end
@@ -224,25 +255,16 @@ end
 % --------------------
 % RHS function (finite-volume / fluxes)
 % --------------------
-function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt)
-
-    % reconstruct states at faces using MUSCL (linear reconstruction) with minmod limiter
-    % For simplicity handle interior with one-sided for boundaries depending on 'boundary'
-
+% compute fluxes via HLL flux with 2nd order MUSCL reconstruction + minmod limiter
+function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt, mu)
     % get primitives
     U = cons2prim(Ucon, gamma);
 
     % extend arrays for BCs
     Uext = applyWallBCs(U, boundary, velocities, freestreamConditions); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
 
-    % Enforce adiabatic walls for geometry boundaries
-    % Uext = applyGeometryAdiabaticBCs(Uext, geoObj, gamma, dt, dx, dy);
-    
     % get conservative vars for padded arrays
     Uext_con = prim2cons(Uext, gamma); 
-
-    % Enforce viscosity to enforce desired Reynolds number
-    mu = 0.0084035;
 
     % compute HLL flux, x-direction (faces perpendicular to x)
     F = HLL_flux(Uext_con, 'x', gamma, mu, dx);
@@ -259,12 +281,11 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma
 
     % Force Coeffs
     if stage == 2
-        contVolFaces = boundBox(geoObj);
-        forces = calculateForces(contVolFaces, F, G, dx, dy);
-        forces(2) = -sum(S(:,:,2),"all")*(dx*dy); % TODO - fix alternate method
+        forces(1) = -sum(S(:,:,2),"all")*(dx*dy); % drag force is x-momentum forcing
+        forces(2) = -sum(S(:,:,3),"all")*(dx*dy); % lift force is y-momentum forcing
         dragCoeff = 2 * forces(1) / (rho0 * velFS ^ 2 * refA);
-        dragCoeffAlt = 2 * forces(2) / (rho0 * velFS ^ 2 * refA);
-        forceCoefficients = [dragCoeff dragCoeffAlt] ; % TODO - add lift coeff
+        liftCoeff = 2 * forces(2) / (rho0 * velFS ^ 2 * refA);
+        forceCoefficients = [dragCoeff liftCoeff] ;
     else 
         forceCoefficients = [];
     end

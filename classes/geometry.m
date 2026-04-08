@@ -5,33 +5,42 @@ classdef geometry
 
     properties
         XYGeometry
+        geoCentre
+        XGrid
+        YGrid
         geometryCells
         geometryBorder
         withinGeometry
         geoGradient
-        volFractions
+        forcingMask
+        SDF
+        loadUnloadInfo
     end
 
     methods
-        function geoObj = geometry(XGrid, YGrid, xGeometry,yGeometry)
+        function geoObj = geometry(XGrid, YGrid, xGeometry, yGeometry)
             % geometry: Construct geometry class
             %   create the XYGeometry property which contains the X,Y
             %   coordinates of the polygon that represents the geometry
             geoObj.XYGeometry = [xGeometry, yGeometry];
+            geoObj.XGrid = XGrid;
+            geoObj.YGrid = YGrid;
             geoObj.geometryCells = inpolygon(XGrid, YGrid, xGeometry, yGeometry); % logical mask for cells which contain the geometry
             geoObj.geometryBorder = bwperim(geoObj.geometryCells); % find the cells which contain the geometry edge
             geoObj.withinGeometry = logical(geoObj.geometryCells - geoObj.geometryBorder); % find the cells entirely within the geometry edge
-            geoObj = volumeFractions(xGeometry, yGeometry, XGrid(1,:) ,YGrid(:,1), geoObj);
+            geoObj.geoCentre = [mean(XGrid(geoObj.geometryCells)) mean(YGrid(geoObj.geometryCells))]; % find the geometric centre
         end
 
-        function geoObj = geoInterpret(geoObj)
+        function geoObj = geoInterpret(geoObj, geoInterpMethod)
             % geoInterpret 
-            %   
-            [gradx, grady] = gradient(double(geoObj.geometryCells));
-            lengthOfNormalVector = sqrt(gradx.^2 + grady.^2);
-            gradx = gradx ./ (lengthOfNormalVector + eps);
-            grady = grady ./ (lengthOfNormalVector + eps);
-            geoObj.geoGradient = cat(3, gradx, grady);
+            switch geoInterpMethod.Value
+                case "None (<1)"
+                geoObj.forcingMask = geoObj.geometryCells;
+                case "Volume Fraction Weighting (~1)"
+                geoObj = volumeFractions(geoObj.XYGeometry(:,1), geoObj.XYGeometry(:,2), geoObj.XGrid(1,:), geoObj.YGrid(:,1), geoObj);
+                case "Velocity Interpolation (~2)"
+                geoObj = gridInterpret(geoObj.XYGeometry(:,1), geoObj.XYGeometry(:,2), geoObj.XGrid(1,:), geoObj.YGrid(:,1), geoObj);
+            end
         end
     end
 end

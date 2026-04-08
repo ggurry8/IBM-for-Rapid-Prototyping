@@ -1,12 +1,13 @@
 classdef simDataStore
-    %simData - store sim data for app purposes when main loop paused
-    %   
+    % simData - store sim data
 
     properties
         density double
         xVelocity double
         yVelocity double
         pressure double
+        fieldAvg double
+        fieldAvgPostTransient double
         gamma double
         R double
         time double
@@ -23,6 +24,8 @@ classdef simDataStore
             simDataStore.xVelocity = U(:,:,2);
             simDataStore.yVelocity = U(:,:,3);
             simDataStore.pressure = U(:,:,4);
+            simDataStore.fieldAvg = U; % store the initial field - running average will be updated each iteration
+            simDataStore.fieldAvgPostTransient = zeros(size(X)); % store zeros - running average will be updated each iteration after settling time reached
             simDataStore.gamma = gamma;
             simDataStore.R = R;
             simDataStore.time = t;

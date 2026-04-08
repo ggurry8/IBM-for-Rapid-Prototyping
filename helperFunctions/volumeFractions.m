@@ -38,7 +38,7 @@ areaFrac(idx) = arrayfun(@(i) ...
     polyarea_wrapper(rectX(i,:), rectY(i,:), x_poly, y_poly) / cellArea, idx); 
 % for each of the boundary cell indices, find the area cut by the boundary
 
-geoObj.volFractions = reshape(areaFrac, size(X));
+geoObj.forcingMask = reshape(areaFrac, size(X));
 
 end
 

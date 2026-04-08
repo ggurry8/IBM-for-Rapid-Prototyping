@@ -6,7 +6,6 @@
 %         gamma - ratio of specific heats
 % L & R denote the left and right faces of the cells relative to direction of flux computation (dir)
 function F = HLL_flux(Uext_con, dir, gamma, mu, spacing)
-
 % define minmod limiter anonymous function
 minmod = @(a,b) 0.5 * (sign(a) + sign(b)) .* min(abs(a), abs(b));
 
@@ -60,11 +59,10 @@ minmod = @(a,b) 0.5 * (sign(a) + sign(b)) .* min(abs(a), abs(b));
     Finv = cellFaceFluxes(ULstruct, URStruct, UL, UR, gamma, dir);
 
     F = Finv - Fvisc;
-
 end
 
 % --------------------
-% helper: 
+% helper: cellFaceFluxes
 % --------------------
 function F = cellFaceFluxes(ULcon, URcon, UL, UR, gamma, dir)
 
@@ -99,11 +97,25 @@ FL = cat(3, FL, (ULcon.rho_u .* velocityL) + pxL); % x-momentum
 FL = cat(3, FL, (ULcon.rho_v .* velocityL) + pyL); % y-momentum
 FL = cat(3, FL, ((ULcon.rho_E + ULcon.p) .* velocityL)); % Energy
 
+% preallocate FL, FR
+% FL = zeros([size(ULcon.rho), 4]);
+% FR = zeros([size(ULcon.rho), 4]);
+
+FL(:,:,1) = ULcon.rho .* velocityL; % Continuity
+FL(:,:,2) = (ULcon.rho_u .* velocityL) + pxL; % x-momentum
+FL(:,:,3) = (ULcon.rho_v .* velocityL) + pyL; % y-momentum
+FL(:,:,4) = (ULcon.rho_E + ULcon.p) .* velocityL; % Energy
+
 % right face flux
 FR = URcon.rho .* velocityR;
 FR = cat(3, FR, (URcon.rho_u .* velocityR) + pxR);
 FR = cat(3, FR, (URcon.rho_v .* velocityR) + pyR);
 FR = cat(3, FR, ((URcon.rho_E + URcon.p) .* velocityR));
+
+% FR(:,:,1) = URcon.rho .* velocityR;
+% FR(:,:,2) = (URcon.rho_u .* velocityR) + pxR;
+% FR(:,:,3) = (URcon.rho_v .* velocityR) + pyR;
+% FR(:,:,4) = (URcon.rho_E + URcon.p) .* velocityR;
 
 % wave speeds
 aL = sqrt(gamma .* ULcon.p ./ ULcon.rho); % left cell speed of sound
@@ -113,6 +125,7 @@ SR = max(velocityL + aL, velocityR + aR); % right wave
 
 Fhll = (SR .* FL - SL .* FR + (SR .* SL) .* (UR - UL)) ./ (SR - SL);
 
+% logic to determine correct wave to use
 FL_mask = SL > 0;
 Fhll_mask = (SL <= 0) & (SR > 0);
 FR_mask = SR <= 0;

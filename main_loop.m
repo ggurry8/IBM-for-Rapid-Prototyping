@@ -34,7 +34,7 @@ profile on
 % Physical parameters
 gamma = 1.4;            % ratio of specific heats
 R = 287;                % gas constant (not used explicitly if using p=(gamma-1)*rho*e)
-mu = 0.0084035;         % enforce viscosity for Re = 1e-4
+mu = 0.084035;         % enforce viscosity
 
 % Flow initial condition (uniform flow)
 rho0 = 1.225;                 % background density
@@ -44,31 +44,25 @@ p0 = 101325;                  % background pressure in Pa
 freestreamConditions = [rho0, U0, V0, p0];
 
 if app.loadFromFile % if loading from save file use initial conditions from save
-    % load primitive variables
-    rho = app.simData.density;
-    u = app.simData.xVelocity;
-    v = app.simData.yVelocity;
-    p = app.simData.pressure;
-    physicalTime = app.simData.time;                                          % initialise variable
-
     % load domain information
     Lx = max(app.simData.geometryData.XGrid,[],"all"); Ly = max(app.simData.geometryData.YGrid,[],"all");         % domain size
     [Ny, Nx] = size(app.simData.geometryData.XGrid);         % grid cells in x/y
     dx = Lx / Nx; dy = Ly / Ny; % grid spacing (x,y)
     [X,Y] = deal(app.simData.geometryData.XGrid,app.simData.geometryData.YGrid);
     minGridSpacing = min(dx,dy);
+    physicalTime = app.simData.time(end);
+
+    % load primitive variables
+    rho = app.simData.density;
+    u = app.simData.xVelocity;
+    v = app.simData.yVelocity;
+    p = app.simData.pressure;
+    U = cat(3, rho, u, v, p);
 
     % load geometry data
     geometryObj = app.simData.geometryData;
     [geoLength, refA] = deal(geometryObj.loadUnloadInfo(1), geometryObj.loadUnloadInfo(2));
 else
-    % initialise primitive variables
-    rho = rho0;
-    u = U0 * ones(size(rho));
-    v = V0 * ones(size(rho));
-    p = p0 * ones(size(rho));
-    physicalTime = 0;                                          % initialise variable
-
     % initialise domain variables
     Lx = app.XDomainEditField.Value; Ly = app.YDomainEditField.Value;         % domain size
     Nx = app.XGridEditField.Value; Ny = app.YGridEditField.Value;         % grid cells in x/y
@@ -77,6 +71,14 @@ else
     y = linspace(dy/2, Ly-dy/2, Ny);
     [X,Y] = meshgrid(x,y);
     minGridSpacing = min(dx,dy);
+    physicalTime = 0;
+
+    % initialise primitive variables
+    rho = rho0 * ones([Ny Nx]);
+    u = U0 * ones(size(rho));
+    v = V0 * ones(size(rho));
+    p = p0 * ones(size(rho));
+    U = cat(3, rho, u, v, p);
 
     % define geometry
     numGeoPoints = app.NumberofPointsEditField.Value;
@@ -126,7 +128,7 @@ Ucon(:,:,4) = rhoe;
 
 % solver parameters
 tEnd = app.EndTimesEditField.Value;           % final time
-visc_alpha = app.ArtificialViscEditField.Value;  % artificial viscosity coeff (set >0 to add stabilization)
+visc_alpha = 0; %app.ArtificialViscEditField.Value;  % artificial viscosity coeff (set >0 to add stabilization)
 
 % external boundaries
 boundaryTypes = app.boundaryTypes;           % 4x1 struct of bcs for each wall
@@ -143,6 +145,11 @@ autosaveFreqCurrent = autosaveFrequency;
 plotEvery = app.UpdateFreqEditField.Value;
 iteration = 1;
 
+% store initial field
+fieldAvg = U;
+fieldAvgPostTransient = zeros([size(X) 4]); % preallocate for update later
+app.simData = simDataStore(U, X, Y, gamma, R, times, geometryObj, residuals, coefficientHistory, fieldAvg, fieldAvgPostTransient, freestreamConditions);
+
 app.NewSimulationButton.Text = "Simulation Running...";
 app.TerminateSimulationButton.Enable = "on";          
 app.PauseSimulationButton.Enable = "on";
@@ -155,10 +162,9 @@ while physicalTime < tEnd
     drawnow limitrate % update GUI with iteration, time, etc
 
     % compute primitive variables & flux Jacobian max wave speed
-    Uinitial = cons2prim(Ucon, gamma);
-    [rho, u, v, p] = deal(Uinitial(:,:,1), Uinitial(:,:,2), Uinitial(:,:,3), Uinitial(:,:,4)); % assign the primitives to individual variables
+    [rho, u, v, p] = deal(U(:,:,1), U(:,:,2), U(:,:,3), U(:,:,4)); % assign the primitives from the previous final U to individual variables
     c = sqrt(max(gamma * p ./ rho, 1e-12));
-    Smax = max(max(sqrt(u.^2 + v.^2) + c));
+    Smax = max(sqrt(u.^2 + v.^2) + c, [], "all");
 
     % CFL control parameters
     iterationResiduals = []; % initialise variable
@@ -177,17 +183,20 @@ while physicalTime < tEnd
 
     % Determine timestep size based on CFL
     tEnd = app.EndTimesEditField.Value;           % check final time input
-    iterationTimestep = CFL * minGridSpacing / Smax;
+    acouDT = CFL * minGridSpacing / Smax; % acoustic time step
+    viscDT = CFL * minGridSpacing .^2 / (mu/rho0); % acoustic time constraint
+    iterationTimestep = min(acouDT,viscDT);
+    app.CurrentdtEditField.Value = iterationTimestep;
     if physicalTime + iterationTimestep > tEnd, iterationTimestep = tEnd - physicalTime; end
 
     % RK2 (Heun): stage 1 (predictor)
     RKstage = 1;
-    [RHSout, ~, ~] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
-    U1 = Ucon + iterationTimestep * RHSout;
+    [RHSout, ~, ~] = RHS(Ucon, U, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
+    Uconint = Ucon + iterationTimestep * RHSout; % intermediate field approximation (after predictor step)
 
-    % stage 2 
+    % RK2 (Heun): stage 2 (corrector)
     RKstage = 2;
-    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(U1, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
+    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(Uconint, U, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
     residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
     times = [times physicalTime]; %#ok - times vector is relatively small memory wise
     
@@ -195,30 +204,35 @@ while physicalTime < tEnd
     app.C_DEditField.Value = mean(coefficientHistory(:,1));
     app.C_LEditField.Value = mean(coefficientHistory(:,2));
 
-    U2 = 0.5 * (Ucon + U1 + iterationTimestep * RHSoutS2);
-    Ucon = U2; % update Ucon with new values
+    Ucon = 0.5 * (Ucon + Uconint + iterationTimestep * RHSoutS2); % final field approximation (after corrector step)
     physicalTime = physicalTime + iterationTimestep;
 
-    Ufinal = cons2prim(Ucon, gamma);
-    app.simData = simDataStore(Ufinal, X, Y, gamma, R, physicalTime, geometryObj, residuals, coefficientHistory);
-
-    app.simData.fieldAvg = app.simData.fieldAvg + Ufinal;
+    U = cons2prim(Ucon, gamma); % update U
+    
+    fieldAvg = fieldAvg + U;
     if physicalTime > settlingTime % begin updating running avg after settling time reached
-        app.simData.fieldAvgPostTransient = app.simData.fieldAvgPostTransient + Ufinal;
+        fieldAvgPostTransient = fieldAvgPostTransient + U;
     end
 
     % update flow visualiser occasionally
     if mod(iteration,plotEvery)==0 || physicalTime>=tEnd
+        app.simData = simDataStore(U, X, Y, gamma, R, times, geometryObj, residuals, coefficientHistory, fieldAvg, fieldAvgPostTransient, freestreamConditions);
+        app.UpdateDisplayButton.Enable = "on"; % can be activated once sim data is available
         varToDisplay = app.DisplayVarDropDown.Value;
         flow_visualiser(app, varToDisplay);
         plotResiduals(app.ResidualsPlot, times, residuals);
     end
 
     if app.TerminateSimProperty
+        % pass sim data out to app
+        app.simData = simDataStore(U, X, Y, gamma, R, times, geometryObj, residuals, coefficientHistory, fieldAvg, fieldAvgPostTransient, freestreamConditions);
+        app.UpdateDisplayButton.Enable = "on"; % can be activated once sim data is available
         app.TerminateSimProperty = false; % reset property
         break
     elseif app.PauseSimulationButton.Value
-        % pass sim data out of app
+        % pass sim data out to app
+        app.simData = simDataStore(U, X, Y, gamma, R, times, geometryObj, residuals, coefficientHistory, fieldAvg, fieldAvgPostTransient, freestreamConditions);
+        app.UpdateDisplayButton.Enable = "on"; % can be activated once sim data is available
         while app.PauseSimulationButton.Value
             if app.TerminateSimProperty
                 app.TerminateSimProperty = false; % reset property
@@ -235,7 +249,9 @@ while physicalTime < tEnd
 
     if autosaveFrequency == 0
         % do nothing
-    elseif autosaveFreqCurrent == 0 % only export results if 
+    elseif autosaveFreqCurrent == 0
+        app.simData = simDataStore(U, X, Y, gamma, R, times, geometryObj, residuals, coefficientHistory, fieldAvg, fieldAvgPostTransient, freestreamConditions);
+        app.UpdateDisplayButton.Enable = "on"; % can be activated once sim data is available
         exportResults(app)
         autosaveFreqCurrent = autosaveFrequency;
     else
@@ -247,6 +263,8 @@ p = profile('info');
 save mainprofiledata p
 
 if physicalTime == tEnd % only export results if end time reached
+    app.simData = simDataStore(U, X, Y, gamma, R, times, geometryObj, residuals, coefficientHistory, fieldAvg, fieldAvgPostTransient, freestreamConditions);
+    app.UpdateDisplayButton.Enable = "on"; % can be activated once sim data is available
     exportResults(app)
 end
 
@@ -256,9 +274,10 @@ end
 % RHS function (finite-volume / fluxes)
 % --------------------
 % compute fluxes via HLL flux with 2nd order MUSCL reconstruction + minmod limiter
-function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt, mu)
-    % get primitives
-    U = cons2prim(Ucon, gamma);
+function [RHS, currentResiduals, forceCoefficients] = RHS(Ucon, U, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt, mu)
+    if stage == 2 % recalculate primitives from intermediate Ucon
+        U = cons2prim(Ucon, gamma);
+    end
 
     % extend arrays for BCs
     Uext = applyWallBCs(U, boundary, velocities, freestreamConditions); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
@@ -276,8 +295,8 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma
     RHS = flow_divergence(F, G, dx, dy);
 
     % Determine and apply IBM source terms
-    S = applyGeometryBCs(RHS, Ucon, geoObj, gamma, dt);
-    RHSout = RHS + S;
+    S = applyGeometryBCs(RHS, U, geoObj, dt);
+    RHS = RHS + S;
 
     % Force Coeffs
     if stage == 2
@@ -292,7 +311,7 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma
 
     % residuals
     for idx = 1:4
-        currentResiduals(idx) = max(abs(RHSout(:,:,idx)), [], "all"); %#ok - 4 elements is tiny memory wise
+        currentResiduals(idx) = max(abs(RHS(:,:,idx)), [], "all"); %#ok - 4 elements is tiny memory wise
     end
 
     % optional explicit artificial viscosity (simple Laplacian on conserved variables)
@@ -304,7 +323,7 @@ function [RHSout, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma
             A = U(:,:,q);
             lap(:,:,q) = (circshift(A,[0 -1]) + circshift(A,[0 1]) - 2*A)/dx^2 + (circshift(A,[-1 0]) + circshift(A,[1 0]) - 2*A)/dy^2;
         end
-        RHSout = RHSout + visc_alpha * lap;
+        RHS = RHS + visc_alpha * lap;
     end
 end
 

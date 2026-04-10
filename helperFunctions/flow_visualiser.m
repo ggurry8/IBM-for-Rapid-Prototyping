@@ -72,7 +72,7 @@ end
     %title(target, sprintf('%s at t = %.4f', param, t));
     colourbar = colorbar(target);
     colourbar.Label.String = colourbarLabel;
-    app.SimulationTimeField.Value = t;
+    % app.SimulationTimeField.Value = t;
 
     if app.plotCD
         title(app.InterpolatedFieldVisualiser, "C_D vs Iteration")

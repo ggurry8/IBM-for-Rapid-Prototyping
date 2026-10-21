@@ -28,13 +28,11 @@
 
 function main_loop(app)
 profile on
-% --------------------
-% Problem / grid setup
-% --------------------
+%% Problem / grid setup
 % Physical parameters
 gamma = 1.4;            % ratio of specific heats
 R = 287;                % gas constant (not used explicitly if using p=(gamma-1)*rho*e)
-mu = 0.084035;         % enforce viscosity
+mu = 0.0084035;         % enforce viscosity
 
 % Flow initial condition (uniform flow)
 rho0 = 1.225;                 % background density
@@ -155,9 +153,7 @@ app.TerminateSimulationButton.Enable = "on";
 app.PauseSimulationButton.Enable = "on";
 pause(0.1) % allow time for updating GUI
 
-% ---------------------
-% Main time loop
-% ---------------------
+%% Main time loop
 while physicalTime < tEnd
     drawnow limitrate % update GUI with iteration, time, etc
 
@@ -168,7 +164,7 @@ while physicalTime < tEnd
 
     % CFL control parameters
     iterationResiduals = []; % initialise variable
-    settlingTime = 0.3; % how long the initial transient lasts (seconds) - also used for starting the running average post transient
+    settlingTime = 1; % how long the initial transient lasts (seconds) - also used for starting the running average post transient
     if max(iterationResiduals) < 0.1
         if physicalTime > settlingTime && CFL < 0.29
             app.CFLEditField.Value = 0.3;
@@ -184,31 +180,31 @@ while physicalTime < tEnd
     % Determine timestep size based on CFL
     tEnd = app.EndTimesEditField.Value;           % check final time input
     acouDT = CFL * minGridSpacing / Smax; % acoustic time step
-    viscDT = CFL * minGridSpacing .^2 / (mu/rho0); % acoustic time constraint
+    viscDT = CFL * minGridSpacing .^2 / (mu/rho0); % viscous time step
     iterationTimestep = min(acouDT,viscDT);
     app.CurrentdtEditField.Value = iterationTimestep;
     if physicalTime + iterationTimestep > tEnd, iterationTimestep = tEnd - physicalTime; end
 
     % RK2 (Heun): stage 1 (predictor)
     RKstage = 1;
-    [RHSout, ~, ~] = RHS(Ucon, U, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
+    [RHSout, ~, ~] = RHS(Ucon, dx, dy, gamma, R, visc_alpha, boundaryTypes, boundaryVelocities, freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
     Uconint = Ucon + iterationTimestep * RHSout; % intermediate field approximation (after predictor step)
 
     % RK2 (Heun): stage 2 (corrector)
     RKstage = 2;
-    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(Uconint, U, dx, dy, gamma, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
+    [RHSoutS2, iterationResiduals, iterationCoefficients] = RHS(Uconint, dx, dy, gamma, R, visc_alpha, boundaryTypes, boundaryVelocities,  freestreamConditions, RKstage, geometryObj, rho0, velFS, refA, iterationTimestep, mu);
     residuals = [residuals; iterationResiduals]; %#ok - residuals vector is relatively small memory wise
     times = [times physicalTime]; %#ok - times vector is relatively small memory wise
-    
-    coefficientHistory = [coefficientHistory; iterationCoefficients(1), iterationCoefficients(2)]; %#ok - coefficients vector is relatively small memory wise
-    app.C_DEditField.Value = mean(coefficientHistory(:,1));
-    app.C_LEditField.Value = mean(coefficientHistory(:,2));
 
     Ucon = 0.5 * (Ucon + Uconint + iterationTimestep * RHSoutS2); % final field approximation (after corrector step)
     physicalTime = physicalTime + iterationTimestep;
 
     U = cons2prim(Ucon, gamma); % update U
     
+    coefficientHistory = [coefficientHistory; iterationCoefficients(1), iterationCoefficients(2)]; %#ok - coefficients vector is relatively small memory wise
+    app.C_DEditField.Value = mean(coefficientHistory(:,1));
+    app.C_LEditField.Value = mean(coefficientHistory(:,2));
+
     fieldAvg = fieldAvg + U;
     if physicalTime > settlingTime % begin updating running avg after settling time reached
         fieldAvgPostTransient = fieldAvgPostTransient + U;
@@ -259,25 +255,26 @@ while physicalTime < tEnd
     end
 end
 
-p = profile('info');
-save mainprofiledata p
+% p = profile('info');
+% save mainprofiledata p
 
 if physicalTime == tEnd % only export results if end time reached
     app.simData = simDataStore(U, X, Y, gamma, R, times, geometryObj, residuals, coefficientHistory, fieldAvg, fieldAvgPostTransient, freestreamConditions);
     app.UpdateDisplayButton.Enable = "on"; % can be activated once sim data is available
     exportResults(app)
 end
-
+p = profile('info');
+save('profileRun','p');
 end
 
-% --------------------
-% RHS function (finite-volume / fluxes)
-% --------------------
+%% RHS function (finite-volume / fluxes)
 % compute fluxes via HLL flux with 2nd order MUSCL reconstruction + minmod limiter
-function [RHS, currentResiduals, forceCoefficients] = RHS(Ucon, U, dx, dy, gamma, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt, mu)
-    if stage == 2 % recalculate primitives from intermediate Ucon
-        U = cons2prim(Ucon, gamma);
-    end
+function [RHS, currentResiduals, forceCoefficients] = RHS(Ucon, dx, dy, gamma, R, visc_alpha, boundary, velocities, freestreamConditions, stage, geoObj, rho0, velFS, refA, dt, mu)
+    % recalculate primitives from Ucon
+    U = cons2prim(Ucon, gamma);
+
+    % Determine IBM source terms
+    S = IBMForcing(U, geoObj, dt);
 
     % extend arrays for BCs
     Uext = applyWallBCs(U, boundary, velocities, freestreamConditions); % adds one-cell padding around arrays (Ny+2 x Nx+2), and applies BCs there
@@ -286,17 +283,20 @@ function [RHS, currentResiduals, forceCoefficients] = RHS(Ucon, U, dx, dy, gamma
     Uext_con = prim2cons(Uext, gamma); 
 
     % compute HLL flux, x-direction (faces perpendicular to x)
-    F = HLL_flux(Uext_con, 'x', gamma, mu, dx);
+    F = HLLC(Uext_con, 'x', gamma, mu, dx, geoObj);
 
     % compute HLL flux, y-direction (faces perpendicular to y)
-    G = HLL_flux(Uext_con, 'y', gamma, mu, dy);
+    G = HLLC(Uext_con, 'y', gamma, mu, dy, geoObj);
 
-    % assemble RHS via divergence of fluxes
-    RHS = flow_divergence(F, G, dx, dy);
+    % Assemble RHS inviscid via divergence of fluxes
+    RHSinv = flow_divergence(F, G, dx, dy);
 
-    % Determine and apply IBM source terms
-    S = applyGeometryBCs(RHS, U, geoObj, dt);
-    RHS = RHS + S;
+    % compute viscous fluxes and assemble
+    [Fv, Gv] = computeViscousFluxes(Uext, dx, dy, mu, R, gamma);
+    RHSvisc = flow_divergence(Fv, Gv, dx, dy);
+    
+    % Assemble full RHS
+    RHS = RHSinv - RHSvisc + S;
 
     % Force Coeffs
     if stage == 2
@@ -311,7 +311,7 @@ function [RHS, currentResiduals, forceCoefficients] = RHS(Ucon, U, dx, dy, gamma
 
     % residuals
     for idx = 1:4
-        currentResiduals(idx) = max(abs(RHS(:,:,idx)), [], "all"); %#ok - 4 elements is tiny memory wise
+        currentResiduals(idx) = max(abs(RHSinv(:,:,idx)), [], "all"); %#ok - 4 elements is tiny memory wise
     end
 
     % optional explicit artificial viscosity (simple Laplacian on conserved variables)

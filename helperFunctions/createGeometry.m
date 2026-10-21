@@ -17,7 +17,7 @@ switch shape
         x = [x1 x2 x3 x4];
         y = [y1 y2 y3 y4];
 
-    case "Circle"
+    case "Cylinder"
         spacing = 2 * pi/points;
         x = zeros(1,points);
         y = zeros(1,points);

@@ -22,13 +22,7 @@ function [u_A, v_A] = velocityInterpolation(forcingMask, U, geoObj)
 
     nForcedCells = length(isectCoords);
 
-    interpolationForcingMask = zeros(size(u));
-
-    % for i = 1:length(forcingCellIdxs)
-    %     interpolationForcingMask(forcingCellIdxs(i,2),forcingCellIdxs(i,1)) = 1;
-    % end
-
-    internalForcingMask = geoObj.geometryCells - interpolationForcingMask;
+    internalForcingMask = geoObj.withinGeometry;
 
     u_W = 0; % boundary X Velocity
     v_W = 0; % boundary Y Velocity
@@ -64,10 +58,10 @@ function [u_A, v_A] = velocityInterpolation(forcingMask, U, geoObj)
 
         phi_W = 0; % zeroed temporarily % TODO how to determine coefficient ϕw when boundary velocity isn't 0
 
-        u_B = u(interpXIdx, interpYIdx);
-        v_B = v(interpXIdx, interpYIdx);
-        u_A(forceXIdx, forceYIdx) = phi_B * u_B + phi_W * u_W;
-        v_A(forceXIdx, forceYIdx) = phi_B * v_B + phi_W * v_W;
+        u_B = u(interpYIdx, interpXIdx);
+        v_B = v(interpYIdx, interpXIdx);
+        u_A(forceYIdx, forceXIdx) = phi_B * u_B + phi_W * u_W;
+        v_A(forceYIdx, forceXIdx) = phi_B * v_B + phi_W * v_W;
 
     end
     % add internal (within boundary) to desired velocity matrix

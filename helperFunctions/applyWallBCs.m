@@ -107,7 +107,7 @@ end
 
 % ------------- Pressure Outlet BC -------------
 function [rho_e, u_e, v_e, p_e] = pressureOutBC(rho_e, u_e, v_e, p_e, domainWall, freestreamConditions)
-% Dirichlet condition - allow velocities to float, set pressure, density
+% Dirichlet condition - allow velocities, density to float, set pressure
     switch domainWall
         case 'left'
             rho_e(:,1)   = rho_e(:,2);
@@ -115,10 +115,18 @@ function [rho_e, u_e, v_e, p_e] = pressureOutBC(rho_e, u_e, v_e, p_e, domainWall
             u_e(:,1)   = u_e(:,2);
             v_e(:,1)   = v_e(:,2);
         case 'right'
+            % rho_e(:,end) = rho_e(:,end-1);
+            % p_e(:,end) = freestreamConditions(4);
+            % u_e(:,end) = u_e(:,end-1);
+            % v_e(:,end) = v_e(:,end-1);
+
+            % relaxed version
+            alpha = 0.05;
+
             rho_e(:,end) = rho_e(:,end-1);
-            p_e(:,end) = freestreamConditions(4);
-            u_e(:,end) = u_e(:,end-1);
-            v_e(:,end) = v_e(:,end-1);
+            u_e(:,end)   = u_e(:,end-1);
+            v_e(:,end)   = v_e(:,end-1);
+            p_e(:,end) = (1-alpha)*p_e(:,end-1) + alpha*freestreamConditions(4);
         case 'top'
             rho_e(1,:)   = rho_e(2,:);
             p_e(1,:)   = freestreamConditions(4);

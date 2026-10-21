@@ -6,11 +6,11 @@ When I'm able to, I intend to make changes to make the code more readable/clear 
 
 ## Example Results
 
-![Example flow visualisation gif showing temperature around a 2D immersed cylinder](/RW-05-IBM-for-Rapid-Prototyping/Icons/IBM_FLOW_VIS.gif)
+![Example flow visualisation gif showing temperature around a 2D immersed cylinder](Icons/IBM_FLOW_VIS.gif)
 _Flow visualisation of temperature around an immersed (2D) cylinder._
 
-![Image of IBM RP graphical user interface](/RW-05-IBM-for-Rapid-Prototyping/Icons/CD_GUI.png)
-_IBM-RP GUI during execution of a simulation._
+![Image of IBM RP graphical user interface](Icons/CD_GUI.png)
+_IBM-RP GUI during execution of a simulation. Flow visualisation, CD/CL plots  or residuals can be viewed on different tabs._
 
 ## Solver Description
 
@@ -27,7 +27,7 @@ The solver is capable of estimating 2D flow fields for various shapes on a recti
 
 The overall algorithm is described in the flow chart below.
 
-![Algorithmic flowchart describing IBM RP solver execution](/RW-05-IBM-for-Rapid-Prototyping/Icons/Algorithm_Flow_Chart.png)
+![Algorithmic flowchart describing IBM RP solver execution](Icons/Algorithm_Flow_Chart.png)
 _Algorithmic flowchart describing IBM RP solver execution._
 
 ### Functions

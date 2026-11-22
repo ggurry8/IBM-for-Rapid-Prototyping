@@ -7,7 +7,7 @@ When I'm able to, I intend to make changes to make the code more readable/clear 
 ## Example Results
 
 ![Example flow visualisation gif showing temperature around a 2D immersed cylinder](Icons/IBM_FLOW_VIS.gif)
-_Flow visualisation of temperature around an immersed (2D) cylinder._
+_Flow visualisation of temperature around an immersed (2D) cylinder. (This may take a few seconds to load)_
 
 ![Image of IBM RP graphical user interface](Icons/CD_GUI.png)
 _IBM-RP GUI during execution of a simulation. Flow visualisation, CD/CL plots  or residuals can be viewed on different tabs._
